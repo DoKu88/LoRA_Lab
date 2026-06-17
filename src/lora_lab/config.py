@@ -141,6 +141,38 @@ class RunConfig:
         return cls.from_dict(data)
 
 
+def _coerce(value: str) -> Any:
+    """Best-effort scalar coercion for CLI overrides ("3" -> 3, "true" -> True)."""
+    low = value.lower()
+    if low in ("true", "false"):
+        return low == "true"
+    if low in ("none", "null"):
+        return None
+    for cast in (int, float):
+        try:
+            return cast(value)
+        except ValueError:
+            continue
+    return value
+
+
+def apply_overrides(d: dict[str, Any], overrides: list[str]) -> dict[str, Any]:
+    """Apply ``dotted.key=value`` overrides to a config dict in place.
+
+    e.g. ``hparams.max_steps=10`` or ``logging.wandb_mode=disabled``.
+    """
+    for ov in overrides:
+        if "=" not in ov:
+            raise ValueError(f"override must be key=value, got {ov!r}")
+        key, raw = ov.split("=", 1)
+        parts = key.split(".")
+        node = d
+        for p in parts[:-1]:
+            node = node.setdefault(p, {})
+        node[parts[-1]] = _coerce(raw)
+    return d
+
+
 def _from_dict(cls: type, d: dict[str, Any]) -> Any:
     """Recursively build a (possibly nested) dataclass from a plain dict.
 
