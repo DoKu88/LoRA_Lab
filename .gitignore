@@ -13,15 +13,16 @@ build/
 dist/
 
 # --- training run outputs (heavy, regenerable) -----------------------------
-# Trained weights / checkpoints are NOT committed; configs + results are.
+# Trained weights / checkpoints are NOT committed. Per-run memory traces and
+# the gpu-mem-vs-iteration plots are regenerable (mem_trace from results/runs,
+# plots via build_table.py) and churn on every run, so they are NOT tracked.
 results/runs/
+results/mem_trace/
+results/plots/
 wandb/
 
-# Keep the curated results artifacts under version control:
-#   results/comparison.csv / .parquet / .md  (the deliverable table/dataset)
-#   results/mem_trace/*.csv                   (per-run memory traces)
-#   results/plots/*.png                       (gpu-mem-vs-iteration plots)
-# (these are small and are the point of Phase 0, so they are tracked)
+# Tracked: the curated deliverable only —
+#   results/comparison.csv / .parquet / .md  (the Phase 0 table/dataset)
 
 # HF / model caches if they ever land in-tree
 .cache/
