@@ -26,17 +26,19 @@ and a one-time token + license acceptance.
 ```bash
 conda run -n lora_lab python scripts/run_matrix.py --tier gated \
     --max-train-samples 500 --epochs 3 --max-eval-samples 100
-# or a single model key:
-conda run -n lora_lab python scripts/run_matrix.py --models gemma2b \
+# or a single model (by HF id):
+conda run -n lora_lab python scripts/run_matrix.py --models google/gemma-2-2b-it \
     --tasks task843_financial_phrasebank_classification
 # or the full ladder (ungated + gated) in one go:
 conda run -n lora_lab python scripts/run_matrix.py --tier all \
     --max-train-samples 500 --epochs 3 --max-eval-samples 100
 ```
 
-`--tier` accepts `ungated` (default — `tiny small mid`), `gated` (`gemma2b
-llama1b`), or `all` (the full five-rung ladder). `--tier all` requires the
-`HF_TOKEN` + accepted licenses below, since it includes the gated rungs.
+`--tier` accepts `ungated` (default — SmolLM2-135M, Qwen2.5-0.5B/1.5B), `gated`
+(`google/gemma-2-2b-it`, `meta-llama/Llama-3.2-1B-Instruct`), or `all` (the full
+five-model ladder). `--tier all` requires the `HF_TOKEN` + accepted licenses
+below, since it includes the gated models. Models are named by HF id throughout
+(see `models:` in `configs/matrix/run-matrix.yaml`).
 
 This appends gated rows to `results/comparison.csv`/`.parquet`/`.md` and
 renders the Gemma/Llama memory-vs-iteration plots alongside the ungated ones
@@ -44,8 +46,8 @@ renders the Gemma/Llama memory-vs-iteration plots alongside the ungated ones
 
 ## 3. Notes / expectations
 
-- **Gemma-2-2B full FT is the real VRAM stress test.** Its tier preset
-  (`gemma2b` in `matrix.py`) already enables 8-bit Adam + gradient
+- **Gemma-2-2B full FT is the real VRAM stress test.** Its per-model preset
+  (`google/gemma-2-2b-it` in `matrix.py`) already enables 8-bit Adam + gradient
   checkpointing + batch size 1 / grad-accum 8 to stay under 32 GB. The peak
   comes from the persisted memory trace; the matrix runner warns if any cell
   exceeds the 32 GB ceiling.
