@@ -11,7 +11,7 @@ Two goals, delivered together:
 1. **De-risk the hardware/toolchain.** Stand up a working Blackwell/sm_120 training stack (CUDA 12.8+, current PyTorch, `bitsandbytes`, PEFT, `transformers`, `trl`) and prove we can train end-to-end on the 5090 with comfortable memory headroom. This is the single most likely thing to eat time, so it goes first.
 2. **Produce a trustworthy three-way fine-tuning comparison.** Run **full fine-tuning vs. regular LoRA vs. QLoRA** on a *common small base model*, across **3–5 Super-Natural-Instructions (SNI) tasks**, fully logged to **Weights & Biases**, and emit a **comparison table + machine-readable results dataset**. The point is to *see and quantify the differences* — quality, peak VRAM, wall-clock, trainable-parameter count — before we scale up to the hypernetwork work in later phases.
 
-**Outcome:** a reproducible harness + a results artifact (`results/comparison.csv`/`.parquet` + a rendered Markdown table + a W&B report) that empirically characterizes how the three regimes trade off on this exact hardware.
+**Outcome:** a reproducible harness + a results artifact (`results/comparison.csv`/`.parquet` + a rendered Markdown table + **a GPU-memory-vs-training-iteration plot overlaying the three methods** + a W&B report) that empirically characterizes how the three regimes trade off on this exact hardware.
 
 > The companion question — *"can we full-finetune Mistral-7B on this box at all?"* — is **Phase 0.5**, a separate time-boxed feasibility spike (see `notes.md` §C2). This document covers Phase 0 only.
 
@@ -40,7 +40,7 @@ All three methods (full FT, LoRA, QLoRA) run on the **same** base at each rung, 
 src/lora_lab/      data/ · methods/ · train/ · eval/ · utils/ (vram, logging)
 configs/           one YAML per run (method × model × task × hparams)
 scripts/           entrypoints (train, eval, build_table)
-results/           comparison.csv / .parquet + rendered table (gitignored except schema)
+results/           comparison.csv / .parquet + table · mem_trace/ (per-run mem-vs-step) · plots/ (gpu-mem-vs-iteration)
 environment.yml    dedicated conda env spec
 ```
 
@@ -78,7 +78,7 @@ Each sprint lists: **(1) Goal/objective · (2) What needs to be accomplished · 
 1. **Goal:** A config-driven run harness parameterizing `{method × model × task × hparams}` that logs metrics + per-phase VRAM. **W&B is a thin, best-effort logging layer** — if auth/setup is unavailable, runs still execute and log locally.
 2. **Accomplish:**
    - Dataclass/YAML config system; configs round-trip (load → run → reproduce).
-   - Standardized logging: train/val loss, throughput (tok/s), step time, peak VRAM per phase, trainable-param count & %, full config snapshot.
+   - Standardized logging: train/val loss, throughput (tok/s), step time, **GPU memory per step (a time series, so it plots as memory-vs-iteration)**, trainable-param count & %, full config snapshot.
    - W&B project init + run naming `{method}-{model}-{task}`; clean `WANDB_MODE=offline`/disabled fallback.
    - A `--dry-run` that logs a fake run end-to-end.
 3. **Definition of done:** local logging (loss + VRAM + config) works and configs round-trip; W&B online logging works *when creds are present* but offline/disabled never blocks a run.
@@ -93,11 +93,12 @@ Each sprint lists: **(1) Goal/objective · (2) What needs to be accomplished · 
    - Common `train(config)` entrypoint.
    - LoRA / QLoRA backends via PEFT; a plain full-FT path.
    - For **Gemma-2-2B full FT**: enable 8-bit Adam + gradient checkpointing + small batch to stay under 32 GB.
+   - **Record GPU memory *as a function of training iteration* for every run.** At each step (or a fixed step interval), sample `torch.cuda.memory_allocated()` / `torch.cuda.memory_reserved()` (GB) via the Sprint 1 VRAM helper and log `gpu_mem_gb` vs. `step` to the harness (W&B logs this as a live curve; also persist the raw trace to `results/mem_trace/{method}-{model}-{task}.csv` so it can be re-plotted offline). The per-run **peak** is just the max of this trace and still feeds the Sprint 5 `peak_vram_gb` column.
    - Checkpoint saving: adapter weights for LoRA/QLoRA, full weights for FT.
    - Each method trains end-to-end on the smallest model + one task.
    - *Internal tracks (full-FT / LoRA / QLoRA) can be built in parallel against the agreed interface.*
-3. **Definition of done:** all three methods train end-to-end on the smallest model + one SNI task, log to the harness, and save a reloadable checkpoint without OOM; Gemma-2-2B full FT verified to fit (documented peak VRAM).
-4. **Required testing:** each backend runs a few steps with decreasing loss; trainable-param counts match expectation per method (full ≫ LoRA ≈ QLoRA); checkpoint reload + inference smoke test; OOM-guard test at the Gemma-2-2B full-FT rung.
+3. **Definition of done:** all three methods train end-to-end on the smallest model + one SNI task, log to the harness, and save a reloadable checkpoint without OOM; **a GPU-memory-vs-iteration trace is recorded and persisted for each method run**; Gemma-2-2B full FT verified to fit (documented peak from the trace).
+4. **Required testing:** each backend runs a few steps with decreasing loss; trainable-param counts match expectation per method (full ≫ LoRA ≈ QLoRA); **the GPU-memory-vs-iteration trace is captured with one sample per logged step, non-zero, and its peak follows the expected ordering (QLoRA < LoRA < full FT)**; checkpoint reload + inference smoke test; OOM-guard test at the Gemma-2-2B full-FT rung.
 
 ### Sprint 5 — Evaluation & Comparison Table/Dataset  *(needs S2 + S4)*
 
@@ -106,9 +107,10 @@ Each sprint lists: **(1) Goal/objective · (2) What needs to be accomplished · 
    - Task metric on the held-out set (exact-match / ROUGE-L per SNI convention).
    - Collect per-run rows: `method, base_model, task, trainable_params, pct_params, peak_vram_gb, wallclock_per_epoch, final_train_loss, eval_metric, checkpoint_size_mb`.
    - Write `results/comparison.csv` (+ `.parquet`) and render a Markdown table.
+   - **Produce the GPU-memory-vs-iteration plot:** read the per-run memory traces from `results/mem_trace/` (Sprint 4) and render `results/plots/gpu_mem_vs_iter_{model}-{task}.png` overlaying the three methods (full FT / LoRA / QLoRA) on shared axes (x = training iteration/step, y = GPU memory GB), so the memory profiles are directly comparable. Save a combined matplotlib figure; also surface it in the W&B report.
    - Push a W&B summary/report (best-effort).
-3. **Definition of done:** running eval over the smallest-model runs produces a populated table (one row per method × task) and a results dataset file; numbers reconcile with the logged metrics.
-4. **Required testing:** metric correctness on a tiny known fixture; table schema validation; reproducibility — re-run eval on a saved checkpoint → same metric within tolerance.
+3. **Definition of done:** running eval over the smallest-model runs produces a populated table (one row per method × task), a results dataset file, **and the overlaid GPU-memory-vs-iteration plot(s)**; numbers reconcile with the logged metrics.
+4. **Required testing:** metric correctness on a tiny known fixture; table schema validation; **the memory plot renders from saved traces with one curve per method and correct axis labels/units (GB vs. step)**; reproducibility — re-run eval on a saved checkpoint → same metric within tolerance.
 
 ### Sprint 6 — Scale-up & Full Comparison Matrix  *(needs all; GPU-serial)*
 
