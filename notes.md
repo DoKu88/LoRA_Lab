@@ -49,7 +49,8 @@ Your trainable parameters are tiny (the hypernetwork + emitted LoRA). The base m
 - **Mixed precision: prefer bf16** (the 5090/Blackwell handles it well) over fp16 — fewer loss-scaling headaches.
 - **Watch the backprop-through-base path.** Generating a LoRA and then backpropagating task loss through the *frozen quantized base* into the *hypernetwork* is the memory-critical step — this is the gradient-checkpointing + (if needed) activation-offload regime. Profile it first; it's where you'll OOM.
 - **CPU offload is your pressure valve, not your default.** ZeRO-Offload / FSDP CPU-offload trades PCIe bandwidth for VRAM. Reach for it only when quant + checkpointing + 8-bit optimizer still OOM, because it slows you down.
-- **If you ever want to train the base too:** GaLore (§2.9) enables full-parameter learning in ~24 GB by low-rank-projecting the optimizer state — relevant only if adapters prove insufficient.
+- **If you ever want to train the base too:** GaLore (§2.9) enables full-parameter learning in ~24 GB by low-rank-projecting the optimizer state — relevant only if adapters prove insufficient. See Phase 0.5 for the full menu of full-FT-on-a-budget tricks (GaLore/Q-GaLore, LOMO, BAdam, MeZO).
+- **Full fine-tuning has a hard ceiling here.** Even a **2–3B** model full-FT is near the 32 GB limit (needs 8-bit Adam + gradient checkpointing + small batch); **7B full FT is out of budget** with naive methods (≈84 GB) — and CPU offload is throttled by only 32 GB system RAM. This is *why* the Phase 0 three-way comparison uses a small common base, and why pushing 7B full FT into 32 GB is its own spike (Phase 0.5).
 
 ### 5090 / Blackwell-specific gotchas
 - It's an **sm_120 (Blackwell)** card — you need a recent CUDA (12.8+) and current PyTorch nightly/stable built for it. Older `bitsandbytes`/`flash-attn`/`xformers` wheels may not have sm_120 kernels yet; budget time for the toolchain, and check each library's Blackwell support before committing. **This is the most likely thing to eat your first week — verify the stack runs end-to-end on a tiny model before scaling.**
@@ -61,6 +62,7 @@ Your trainable parameters are tiny (the hypernetwork + emitted LoRA). The base m
 - **Log VRAM per phase** (`torch.cuda.max_memory_allocated()`), not just at the end — you need to know which pool blew up.
 - **Version your LoRA library and eval splits** like data — reproducibility of the meta-training set is the experiment's backbone.
 - **Deterministic seeds + a fixed held-out task set** from day one, or your interpretability comparisons won't be trustworthy.
+- **Log every run to Weights & Biases** (loss, VRAM-per-phase, throughput, trainable-param %, and the full config snapshot) in a versioned W&B project, so the Phase 0 three-way comparison is auditable and reproducible. Keep it best-effort with an offline fallback — don't let W&B setup block a training run.
 
 ---
 
@@ -95,9 +97,24 @@ Sizes below are the **base model weights only**. On your 32 GB 5090 under QLoRA 
 
 Each phase ends in a **gate** — a concrete yes/no you must clear before the next phase is worth starting. Gates exist so you fail in week 3, not week 10.
 
-**Phase 0 — De-risk the hardware (Week 1).**
-Stand up the Blackwell/sm_120 toolchain; reproduce a vanilla QLoRA fine-tune of one 7–8B model on one task; log VRAM per phase (§B). This is the single most likely thing to eat time, so it goes first.
-→ **Gate:** you can train *and merge* a LoRA on the 5090 with comfortable memory headroom. If not, the rest of the project is blocked — fix this before anything else.
+**Phase 0 — De-risk the hardware *and* run the three-way fine-tuning comparison (Week 1).** *(This is the project's first engineering phase. Detailed sprint breakdown: [`docs/phase-0-sprint-plan.md`](./docs/phase-0-sprint-plan.md).)*
+Stand up the Blackwell/sm_120 toolchain (in a **dedicated conda env** for this repo), then reproduce not just QLoRA but a controlled **three-way comparison — full fine-tuning vs. regular LoRA vs. QLoRA** — on a **common small base** (start at the smallest model for plumbing, then ladder up to **Gemma-2-2B-Instruct**), across **3–5 SNI tasks**, logged to **Weights & Biases**, producing a **comparison table + machine-readable results dataset** (quality, peak VRAM, wall-clock, trainable-param count). Seeing these differences empirically — on *this* hardware — is the point. Log VRAM per phase (§B).
+*Why a small common base and not Mistral-7B: full FT of a 7B does not fit in 32 GB (≈84 GB for bf16+Adam), and CPU offload is blocked by only 32 GB system RAM — so an apples-to-apples three-way comparison must use a base small enough that **full FT fits**. Whether 7B full FT is reachable by any trick is a separate question — see Phase 0.5.*
+→ **Gate:** you can train *and merge* a LoRA on the 5090 with comfortable memory headroom, **and** the three-way comparison table is produced and reproducible across the model ladder. If not, the rest of the project is blocked — fix this before anything else.
+
+**Phase 0.5 — Can we full-finetune Mistral-7B *here*? (feasibility spike, time-boxed).**
+A focused investigation — *not* a commitment to succeed — answering: given **32 GB VRAM + 32 GB system RAM**, is a true **full-parameter** fine-tune of `Mistral-7B-Instruct-v0.2` achievable with any known memory-reduction trick, and at what cost in speed/quality? This matters because Phase 0's three-way comparison is forced onto a *small* base precisely because 7B full FT doesn't fit the naive way — so it's worth checking whether the cleverer techniques change that.
+
+*The wall:* bf16 + standard Adam on 7B ≈ 14 GB weights + 14 GB grads + ~56 GB optimizer states ≈ **84 GB** — far over 32 GB. **CPU offload is largely blocked by only 32 GB RAM** (the usual ZeRO-Offload escape hatch is weak here); NVMe offload (ZeRO-Infinity) is the only offload path and is slow + SSD-dependent.
+
+*Techniques to investigate / benchmark* (note which cut VRAM **directly** vs. which lean on RAM we don't have):
+- **GaLore / Q-GaLore** (§2.9 / §2.11) — low-rank gradient projection enabling full-parameter training in far less VRAM; Q-GaLore adds quantization. *VRAM-direct; most promising.*
+- **LOMO / AdaLOMO** (§2.12) — fuse the gradient computation with the parameter update to avoid storing full gradients/optimizer state (SGD-like footprint). *VRAM-direct; designed for exactly this.*
+- **BAdam** (§2.13) — block-coordinate optimization: only one transformer block carries gradients/optimizer state at a time, cycling through all blocks (full-param over the run). *VRAM-direct.*
+- **MeZO** (§2.14) — zeroth-order, forward-only optimization (no backprop ⇒ inference-level memory); can full-FT large models but is slow/noisy. *VRAM-direct; last resort.*
+- **Stackable levers:** 8-bit / paged AdamW (§2.8), gradient checkpointing (§2.7), activation offload, dropping the fp32 master copy.
+- **Offload paths (RAM-ceiling caveat):** ZeRO-Offload (§2.6) / FSDP CPU-offload (§2.10) — limited by 32 GB RAM; **ZeRO-Infinity** NVMe offload (§2.6) — only with a fast SSD, expect large slowdowns.
+→ **Deliverable / Gate:** a short feasibility note with **the memory math + measured peak VRAM per technique**, and either (a) a working config that full-finetunes Mistral-7B end-to-end here (even if slow), or (b) a documented "no — here's the wall and the closest we got." *Either outcome is a valid result* and decides whether full FT stays small-model-only for the rest of the project.
 
 **Phase 1 — Build the LoRA library (Weeks 2–3).**
 Assemble a per-task LoRA for your conditioning set. Version the tasks, the LoRAs, and a **frozen held-out split** of tasks you will *never* train the hypernetwork on. These trained LoRAs are also your interp comparison baseline.

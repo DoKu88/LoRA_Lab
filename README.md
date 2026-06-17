@@ -21,7 +21,8 @@ Current work treats the hypernetwork as a black box judged only on downstream ac
 |---|---|
 | `summaries.md` | Per-paper summaries of the literature (~35 papers across hypernetworks, PEFT, VLAs, interpretability). |
 | `themes.md` | Cross-cutting synthesis — the 5 themes and current research thrusts the project sits at the intersection of. |
-| `notes.md` | Practical playbook — scoping questions, the 32 GB memory budget, Blackwell/sm_120 toolchain gotchas, engineering hygiene. |
+| `notes.md` | Practical playbook — scoping questions, the 32 GB memory budget, Blackwell/sm_120 toolchain gotchas, engineering hygiene, phased timeline. |
+| `docs/` | Sprint-planning material. `docs/phase-0-sprint-plan.md` breaks the first engineering phase into sprints. |
 | `pdfs/` | Source PDFs, numbered by section (gitignored — large binaries). |
 
 ## Current status & next steps
@@ -34,7 +35,7 @@ This is currently a **literature-review and scoping phase** — no training code
 - **Base model** — quantized 7–8B (Llama/Qwen/Gemma class) is the sweet spot for 32 GB.
 - **Generalization eval** — the held-out split design *is* the experiment.
 
-First engineering milestone: a tiny end-to-end harness (125M–1B base, ~3 toy tasks) running the full generate-LoRA → apply → eval → backprop loop, and verifying the Blackwell toolchain (CUDA 12.8+, current PyTorch, sm_120 `bitsandbytes`) end-to-end *before* scaling.
+First engineering phase (**Phase 0**, see [`docs/phase-0-sprint-plan.md`](./docs/phase-0-sprint-plan.md)): verify the Blackwell toolchain (CUDA 12.8+, current PyTorch, sm_120 `bitsandbytes`) end-to-end on a tiny base, then run a controlled **three-way fine-tuning comparison — full FT vs. LoRA vs. QLoRA** — on a common small model (laddering up to Gemma-2-2B-Instruct) across 3–5 SNI tasks, logged to **Weights & Biases**, producing a comparison table + results dataset. A companion spike (**Phase 0.5**) tests whether any memory trick can full-finetune Mistral-7B on this 32 GB box.
 
 ## Notes
 

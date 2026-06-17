@@ -36,6 +36,14 @@ No single trick fits big training on a 5090; you compose them, and they attack *
 
 Because you only train a *small* hypernetwork while the base model stays frozen and quantized, your situation is closer to QLoRA than to full pretraining — the base model is a frozen 4-bit feature extractor, and your trainable footprint is the hypernetwork plus the LoRA it emits. This is favorable: the 5090 is genuinely viable here.
 
+**A second lever class — *making full fine-tuning itself fit*.** The levers above keep the base frozen; a separate family instead trains *all* parameters but shrinks the gradient/optimizer-state cost so full FT fits a small GPU:
+- **Low-rank gradients** → GaLore / Q-GaLore project gradients (and optionally quantize the projections) into a low-rank subspace, keeping full-rank weight updates.
+- **Fused update** → LOMO / AdaLOMO compute-and-apply the gradient in one step so full gradients/optimizer state are never stored (SGD-like footprint, Adam-like LR for AdaLOMO).
+- **Block-coordinate** → BAdam keeps only one transformer block's gradients + optimizer state live at a time, cycling through all blocks.
+- **Zeroth-order** → MeZO drops backprop entirely (forward-only), so training memory ≈ inference memory — slow but extreme.
+
+This class is what the **Phase 0.5** spike benchmarks (`notes.md` §C2): the practical reality on **32 GB VRAM + only 32 GB system RAM** is that CPU-offload paths (ZeRO-Offload/FSDP) are throttled by RAM, so the *VRAM-direct* techniques above — not offload — are the realistic route if 7B full FT is reachable at all. For Phase 0's apples-to-apples comparison we sidestep this by using a small common base where ordinary full FT fits; these techniques are how that ceiling might be lifted later.
+
 ## Theme 4 — VLAs as a second, harder testbed
 
 The VLA papers (RT-1 → RT-2 → OpenVLA → π0) trace control becoming a token-prediction / flow problem on top of a VLM, and OpenVLA + the OFT study show LoRA already works for *single-arm, low-frequency* robot adaptation but **breaks down for high-frequency bimanual control.** HyperVLA is the direct analog of your project in robotics (hypernetwork → policy). The interesting tension: a text-conditioned hypernetwork is natural for LLM tasks, but for VLAs the conditioning may need to be a demonstration, a goal image, or an embodiment descriptor — a richer, multimodal signal.

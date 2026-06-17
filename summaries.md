@@ -92,6 +92,30 @@ Projects gradients onto a low-rank subspace (exploiting the inherent low-rank st
 *Zhao, Gu, Varma, Luo, Huang, Xu, Wright, et al. (Meta), 2023 — VLDB 2023 — [arXiv:2304.11277](https://arxiv.org/abs/2304.11277) — [`pdfs/2.10_PyTorch-FSDP.pdf`](./pdfs/2.10_PyTorch-FSDP.pdf)*
 Production design of FSDP: shards parameters, gradients, and optimizer states, and **materializes full parameters only per-layer as needed** during forward/backward, then re-shards — the literal "load layers as you go" pattern you described. Co-designed with PyTorch internals, with CPU offload, compute/communication overlap, and mixed precision, achieving near-DDP throughput on much larger models. (Single-GPU you'd use it mainly for its offload/per-layer-materialization machinery.)
 
+### Full-parameter fine-tuning under tight memory (Phase 0.5 candidates — no local PDFs yet)
+
+*Added for the **Phase 0.5** spike ("can we full-finetune Mistral-7B on 32 GB VRAM + 32 GB RAM?", see `notes.md` §C2). These make **full-parameter** training fit on a small GPU by attacking the gradient/optimizer-state pools rather than freezing the base. PDFs are not yet in `pdfs/` — links are to arXiv; treat as a reading queue.*
+
+### 2.11 Q-GaLore: Quantized GaLore with INT4 Projection and Layer-Adaptive Low-Rank Gradients
+*Zhang, Liu, Hu, Lee, Wang, et al., 2024 — [arXiv:2407.08296](https://arxiv.org/abs/2407.08296)*
+Extends GaLore (§2.9) by **quantizing both the weights (INT4/INT8) and the low-rank projection matrices**, and skipping projection updates in layers whose gradient subspace is stable ("layer-adaptive"). Pushes full-parameter pretraining/fine-tuning into a smaller memory envelope than GaLore (e.g. 7B regimes on ~16 GB-class budgets), at some quality/throughput cost. The most aggressive "full-parameter on a consumer GPU" option to benchmark first in Phase 0.5.
+
+### 2.12 LOMO / AdaLOMO: Full-Parameter Fine-Tuning with Limited Resources
+*Lv, Yang, Liu, Gao, Guo, Qiu, 2023 — LOMO [arXiv:2306.09782](https://arxiv.org/abs/2306.09782); AdaLOMO [arXiv:2310.10195](https://arxiv.org/abs/2310.10195)*
+**LOMO** ("LOw-Memory Optimization") **fuses the gradient computation and the parameter update into one step**, so full gradients and optimizer state never need to be materialized — collapsing the footprint toward SGD-like (weights + activations only) and enabling full-parameter tuning of large models on far less VRAM. **AdaLOMO** adds an Adam-style adaptive per-parameter learning rate while keeping the fused, low-memory update, recovering most of the optimization quality LOMO's vanilla SGD-like rule gives up. Directly targets the Phase 0.5 question; the main cost is throughput and tuning sensitivity.
+
+### 2.13 BAdam: A Memory-Efficient Full-Parameter Optimization Method
+*Luo, Hu, Zhang, Yuan, Sun, Yin, Wei, Zhang, 2024 — NeurIPS 2024 — [arXiv:2404.02827](https://arxiv.org/abs/2404.02827)*
+Applies **block-coordinate descent over the transformer's blocks**: at any moment only *one* block is "active" and carries gradients + Adam optimizer state, while the rest are frozen; the active block cycles across the network so all parameters are eventually updated (full-parameter over the run). This slashes the gradient/optimizer-state memory roughly by the block count, letting a 7B model full-finetune on a single consumer GPU. A clean middle ground between LoRA and naive full FT for the Phase 0.5 benchmark.
+
+### 2.14 MeZO: Fine-Tuning Language Models with Just Forward Passes
+*Malladi, Gao, Nichani, Damian, Lee, Chen, Arora, 2023 — NeurIPS 2023 — [arXiv:2305.17333](https://arxiv.org/abs/2305.17333)*
+A **memory-efficient zeroth-order optimizer**: estimates gradients from *forward passes only* (perturb weights, compare losses) so training memory equals **inference memory** — no backprop, no stored activations or optimizer state. Can full-finetune very large models on tight hardware, but converges slowly and noisily and typically needs prompts/many steps. The "last resort" option in Phase 0.5 — relevant if every backprop-based trick still OOMs.
+
+### 2.6′ ZeRO-Infinity (NVMe offload, extends §2.6)
+*Rajbhandari, Ruwase, Yang, He, 2021 — SC '21 — [arXiv:2104.07857](https://arxiv.org/abs/2104.07857)*
+The successor to ZeRO-Offload (§2.6) that adds **NVMe (SSD) offload** of parameters, gradients, and optimizer states, plus bandwidth-centric partitioning — enabling models far larger than GPU+CPU memory by streaming state off disk. Listed here because it's the **only offload path that survives this machine's 32 GB RAM ceiling** for 7B full FT; the trade-off is heavy dependence on a fast SSD and large throughput penalties. A Phase 0.5 fallback to measure, not a default.
+
 ---
 
 ## 3. Vision-Language-Action Models & Efficient Adaptation
@@ -205,8 +229,9 @@ Generalizes E4T into a **single domain-agnostic encoder** that personalizes acro
 ---
 
 ## Coverage notes
-- **42 sources total:** 39 downloaded PDFs + 3 web-only Anthropic articles (§4.2, §4.3, §4.5).
-- The user's named techniques are all covered: quantization (§2.2, §2.8), gradient checkpointing (§2.7), and layer-wise/offloaded backprop (§2.6 ZeRO-Offload, §2.10 FSDP).
+- **42 sources with PDFs/links** (39 downloaded PDFs + 3 web-only Anthropic articles §4.2/§4.3/§4.5), **plus 6 reading-queue additions** for the Phase 0.5 full-FT spike (§2.11 Q-GaLore, §2.12 LOMO/AdaLOMO, §2.13 BAdam, §2.14 MeZO, §2.6′ ZeRO-Infinity) — these have no local PDFs yet; download before citing.
+- The user's named techniques are all covered: quantization (§2.2, §2.8), gradient checkpointing (§2.7), and layer-wise/offloaded backprop (§2.6 ZeRO-Offload, §2.6′ ZeRO-Infinity, §2.10 FSDP).
+- **Full-parameter-on-a-budget cluster (§2.9, §2.11–§2.14):** GaLore, Q-GaLore, LOMO/AdaLOMO, BAdam, MeZO — the candidate techniques for getting Mistral-7B to full-finetune on 32 GB (see `notes.md` §C2 Phase 0.5).
 - Provenance flags: §4.10 is a single-author 2026 preprint; §1.6 and §1.2 are very recent. Weight their claims accordingly.
 
 ## Parked scope (LLM-first)
