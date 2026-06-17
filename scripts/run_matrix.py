@@ -16,6 +16,9 @@ big runs come last. A per-cell OOM is caught and recorded, not fatal.
 
     # gated follow-on (Sprint 7) — needs HF_TOKEN + accepted licenses
     conda run -n lora_lab python scripts/run_matrix.py --tier gated
+
+    # the full ladder (ungated + gated) in one go — needs HF_TOKEN
+    conda run -n lora_lab python scripts/run_matrix.py --tier all
 """
 
 from __future__ import annotations
@@ -108,7 +111,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", nargs="*", default=None,
                     help=f"model keys from {list(MODELS)} (default: ungated ladder)")
-    ap.add_argument("--tier", choices=["ungated", "gated"], default="ungated")
+    ap.add_argument("--tier", choices=["ungated", "gated", "all"], default="ungated")
     ap.add_argument("--tasks", nargs="*", default=DEFAULT_TASKS)
     ap.add_argument("--methods", nargs="*", default=DEFAULT_METHODS)
     ap.add_argument("--max-train-samples", type=int, default=-1)
@@ -123,8 +126,12 @@ def main() -> int:
 
     if args.models:
         models = args.models
+    elif args.tier == "all":
+        models = UNGATED_TIERS + GATED_TIERS
+    elif args.tier == "gated":
+        models = GATED_TIERS
     else:
-        models = GATED_TIERS if args.tier == "gated" else UNGATED_TIERS
+        models = UNGATED_TIERS
 
     # smallest-first
     models = sorted(models, key=order_key)

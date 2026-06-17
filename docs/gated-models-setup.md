@@ -29,7 +29,14 @@ conda run -n lora_lab python scripts/run_matrix.py --tier gated \
 # or a single model key:
 conda run -n lora_lab python scripts/run_matrix.py --models gemma2b \
     --tasks task843_financial_phrasebank_classification
+# or the full ladder (ungated + gated) in one go:
+conda run -n lora_lab python scripts/run_matrix.py --tier all \
+    --max-train-samples 500 --epochs 3 --max-eval-samples 100
 ```
+
+`--tier` accepts `ungated` (default — `tiny small mid`), `gated` (`gemma2b
+llama1b`), or `all` (the full five-rung ladder). `--tier all` requires the
+`HF_TOKEN` + accepted licenses below, since it includes the gated rungs.
 
 This appends gated rows to `results/comparison.csv`/`.parquet`/`.md` and
 renders the Gemma/Llama memory-vs-iteration plots alongside the ungated ones

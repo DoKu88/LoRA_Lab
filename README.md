@@ -45,6 +45,10 @@ conda run -n lora_lab python scripts/train.py --config configs/runs/example-lora
 # 5. the comparison matrix, smallest-first (trains + evals every cell)
 conda run -n lora_lab python scripts/run_matrix.py --models tiny small mid \
     --max-train-samples 500 --epochs 3 --max-eval-samples 100
+#    --tier {ungated|gated|all}: pick a preset ladder instead of --models.
+#    `all` runs the full five-rung ladder (gated rungs need HF_TOKEN).
+conda run -n lora_lab python scripts/run_matrix.py --tier all \
+    --max-train-samples 500 --epochs 3 --max-eval-samples 100
 
 # 6. (re)build the deliverable table + memory-vs-iteration plots from run dirs
 conda run -n lora_lab python scripts/build_table.py
@@ -60,7 +64,7 @@ conda run -n lora_lab python scripts/build_table.py
 | `src/lora_lab/matrix.py` | model ladder + per-tier presets for the sweep |
 | `results/` | `comparison.{csv,parquet,md}` · `mem_trace/` · `plots/` |
 
-**Model ladder (ungated):** SmolLM2-135M → Qwen2.5-0.5B-Instruct → Qwen2.5-1.5B-Instruct. The gated Gemma-2-2B / Llama-3.2 rungs are a follow-on (Sprint 7) — see [`docs/gated-models-setup.md`](./docs/gated-models-setup.md). Findings: [`docs/phase-0-findings.md`](./docs/phase-0-findings.md).
+**Model ladder (ungated):** SmolLM2-135M → Qwen2.5-0.5B-Instruct → Qwen2.5-1.5B-Instruct. The gated Gemma-2-2B / Llama-3.2 rungs are a follow-on (Sprint 7) — see [`docs/gated-models-setup.md`](./docs/gated-models-setup.md). To sweep the full five-rung ladder (ungated + gated) in one go, run `run_matrix.py --tier all` once an `HF_TOKEN` is set. Findings: [`docs/phase-0-findings.md`](./docs/phase-0-findings.md).
 
 ## Project status & next steps
 
