@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -39,10 +40,21 @@ class RunLogger:
         self._init_wandb()
 
     # ---- W&B (best-effort) --------------------------------------------
+    def _wandb_run_name(self) -> str:
+        """W&B display name: ``MM_DD_YYYY_HR_MM_SEC_<model>_<task>``.
+
+        Timestamp-prefixed so re-runs of the same cell are distinct runs in the
+        W&B UI (the local results/runs/ dir stays ``{method}-{model}-{task}``).
+        Method is preserved as the W&B ``group`` rather than in the name.
+        """
+        ts = datetime.now().strftime("%m_%d_%Y_%H_%M_%S")
+        return f"{ts}_{self.config.model_slug}_{self.config.task}"
+
     def _init_wandb(self) -> None:
         if self._wandb_mode == "disabled":
             print("[wandb] disabled")
             return
+        wb_name = self._wandb_run_name()
         try:
             import wandb
 
@@ -50,7 +62,7 @@ class RunLogger:
             run = wandb.init(
                 project=self.config.logging.wandb_project,
                 entity=self.config.logging.wandb_entity,
-                name=self.config.name,
+                name=wb_name,
                 group=self.config.method,
                 job_type=self.config.task,
                 mode=self._wandb_mode,
@@ -69,7 +81,7 @@ class RunLogger:
 
                     wandb.init(
                         project=self.config.logging.wandb_project,
-                        name=self.config.name,
+                        name=wb_name,
                         mode="offline",
                         dir=str(self.output_dir),
                         config=self.config.to_dict(),

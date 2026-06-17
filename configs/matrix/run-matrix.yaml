@@ -8,11 +8,11 @@
 # Sizes are weights only at fp16/bf16 (~2 bytes/param); fp32 is ~2x.
 # The last two are gated (need HF_TOKEN + accepted licenses).
 models:
-  #- HuggingFaceTB/SmolLM2-135M          # 135M params, ~0.27 GB fp16
-  #- Qwen/Qwen2.5-0.5B-Instruct          # 494M params, ~0.99 GB fp16
-  #- Qwen/Qwen2.5-1.5B-Instruct          # 1.54B params, ~3.1 GB fp16
+  - HuggingFaceTB/SmolLM2-135M          # 135M params, ~0.27 GB fp16
+  - Qwen/Qwen2.5-0.5B-Instruct          # 494M params, ~0.99 GB fp16
+  - Qwen/Qwen2.5-1.5B-Instruct          # 1.54B params, ~3.1 GB fp16
   - google/gemma-2-2b-it                # 2.61B params, ~5.2 GB fp16  (gated)
-  #- meta-llama/Llama-3.2-1B-Instruct    # 1.24B params, ~2.5 GB fp16  (gated)
+  - meta-llama/Llama-3.2-1B-Instruct    # 1.24B params, ~2.5 GB fp16  (gated)
 
 tasks:
   - task1564_triviaqa_answer_generation
