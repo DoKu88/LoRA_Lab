@@ -48,8 +48,6 @@ def build_model_and_tokenizer(config: RunConfig):
     method = config.method
     use_gc = method == "full_ft" and config.full_ft.gradient_checkpointing
 
-    common = {"dtype": torch.bfloat16}
-
     if method == "qlora":
         from transformers import BitsAndBytesConfig
 
@@ -60,10 +58,15 @@ def build_model_and_tokenizer(config: RunConfig):
             bnb_4bit_compute_dtype=_DTYPE[config.quant.compute_dtype],
         )
         model = AutoModelForCausalLM.from_pretrained(
-            config.base_model, quantization_config=bnb, device_map={"": 0}, **common
+            config.base_model, quantization_config=bnb, device_map={"": 0},
+            dtype=torch.bfloat16,
         )
     else:
-        model = AutoModelForCausalLM.from_pretrained(config.base_model, **common)
+        # Full FT keeps fp32 master weights (updated under bf16 autocast) —
+        # pure-bf16 weight updates are too imprecise and diverge. LoRA's frozen
+        # base can stay bf16 since it is never updated.
+        load_dtype = torch.float32 if method == "full_ft" else torch.bfloat16
+        model = AutoModelForCausalLM.from_pretrained(config.base_model, dtype=load_dtype)
         if torch.cuda.is_available():
             model = model.to("cuda")
 

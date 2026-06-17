@@ -59,6 +59,7 @@ class HParams:
     grad_accum: int = 1
     num_epochs: float = 1.0
     max_steps: int = -1  # -1 => use num_epochs
+    max_train_samples: int = -1  # -1 => use the full train split
     max_seq_len: int = 512
     warmup_ratio: float = 0.03
     weight_decay: float = 0.0

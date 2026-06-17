@@ -60,6 +60,7 @@ def train(config: RunConfig) -> dict:
         config.task,
         tok,
         max_seq_len=config.hparams.max_seq_len,
+        max_train_samples=config.hparams.max_train_samples,
         seed=config.hparams.seed,
         max_eval_samples=config.eval.max_eval_samples,
     )
@@ -108,7 +109,10 @@ def train(config: RunConfig) -> dict:
     while not done:
         for micro, batch in enumerate(loader):
             batch = {k: v.to(device) for k, v in batch.items()}
-            out = model(**batch)
+            # bf16 autocast: necessary for fp32-master full FT, harmless for the
+            # already-bf16/4-bit LoRA/QLoRA bases. bf16 needs no GradScaler.
+            with torch.autocast("cuda", dtype=torch.bfloat16, enabled=(device == "cuda")):
+                out = model(**batch)
             loss = out.loss / grad_accum
             loss.backward()
             interval_loss += out.loss.item()
