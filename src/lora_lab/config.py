@@ -41,10 +41,15 @@ class QuantParams:
 
 @dataclass
 class FullFtParams:
-    """Memory levers for the full-FT stress rung (sprint plan S4)."""
+    """Memory levers for the full-FT stress rung (sprint plan S4).
+
+    ``gradient_checkpointing`` defaults OFF so the small-model comparison stays
+    apples-to-apples with LoRA/QLoRA (which don't checkpoint); the matrix turns
+    it ON for the larger full-FT rungs that need it to fit under 32 GB.
+    """
 
     use_8bit_adam: bool = True
-    gradient_checkpointing: bool = True
+    gradient_checkpointing: bool = False
 
 
 @dataclass

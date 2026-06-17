@@ -111,13 +111,28 @@ class MemoryTracer:
     allocated_gb: list[float] = field(default_factory=list)
     reserved_gb: list[float] = field(default_factory=list)
 
-    def record(self, step: int) -> dict[str, float]:
-        """Sample memory now and append to the trace; returns the sample."""
-        snap = cuda_mem_snapshot(self.device)
+    def record(self, step: int, peak: bool = True) -> dict[str, float]:
+        """Sample memory now and append to the trace; returns the sample.
+
+        ``peak=True`` (default) records the *peak* allocated/reserved since the
+        last sample, then resets the CUDA peak counters. Because the counter
+        resets to the current resident value, every point still includes the
+        resident model weights — so the trace is a true memory *envelope* vs.
+        iteration (captures the backward-pass spike), and ``max`` over it is the
+        real per-run peak. ``peak=False`` records the instantaneous value.
+        """
+        if peak and cuda_available():
+            alloc = bytes_to_gb(torch.cuda.max_memory_allocated(self.device))
+            resv = bytes_to_gb(torch.cuda.max_memory_reserved(self.device))
+            torch.cuda.reset_peak_memory_stats(self.device)
+            sample = {"allocated_gb": alloc, "reserved_gb": resv}
+        else:
+            snap = cuda_mem_snapshot(self.device)
+            sample = {"allocated_gb": snap["allocated_gb"], "reserved_gb": snap["reserved_gb"]}
         self.steps.append(int(step))
-        self.allocated_gb.append(snap["allocated_gb"])
-        self.reserved_gb.append(snap["reserved_gb"])
-        return snap
+        self.allocated_gb.append(sample["allocated_gb"])
+        self.reserved_gb.append(sample["reserved_gb"])
+        return sample
 
     @property
     def peak_gb(self) -> float:
