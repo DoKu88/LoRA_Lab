@@ -1,0 +1,49 @@
+# Phase 0 — Three-Way Fine-Tuning Comparison
+
+| method | base_model | task | trainable_params | pct_params | peak_vram_gb | wallclock/epoch (s) | final_loss | eval | metric | ckpt MB |
+|---|---|---|---|---|---|---|---|---|---|---|
+| qlora | Qwen2.5-0.5B-Instruct | task1344_glue_entailment_classification | 2,162,688 | 0.681629 | 6.655 | 7.92 | 0.06468 | 0.81 | exact_match | 19.18 |
+| lora | Qwen2.5-0.5B-Instruct | task1344_glue_entailment_classification | 2,162,688 | 0.435854 | 5.686 | 6.72 | 0.057 | 0.79 | exact_match | 19.18 |
+| full_ft | Qwen2.5-0.5B-Instruct | task1344_glue_entailment_classification | 494,032,768 | 100.0 | 10.05 | 9.24 | 7e-05 | 0.76 | exact_match | 1896 |
+| qlora | Qwen2.5-0.5B-Instruct | task1564_triviaqa_answer_generation | 2,162,688 | 0.681629 | 4.398 | 1.05 | 0.00164 | 0.04545 | rougeL | 19.18 |
+| lora | Qwen2.5-0.5B-Instruct | task1564_triviaqa_answer_generation | 2,162,688 | 0.435854 | 3.834 | 0.73 | 0.00167 | 0.06061 | rougeL | 19.18 |
+| full_ft | Qwen2.5-0.5B-Instruct | task1564_triviaqa_answer_generation | 494,032,768 | 100.0 | 7.889 | 1.12 | 2e-05 | 0 | rougeL | 1896 |
+| qlora | Qwen2.5-0.5B-Instruct | task512_twitter_emotion_classification | 2,162,688 | 0.681629 | 4.745 | 6.31 | 0.05472 | 0.62 | exact_match | 19.18 |
+| lora | Qwen2.5-0.5B-Instruct | task512_twitter_emotion_classification | 2,162,688 | 0.435854 | 4.11 | 4.48 | 0.06304 | 0.7 | exact_match | 19.18 |
+| full_ft | Qwen2.5-0.5B-Instruct | task512_twitter_emotion_classification | 494,032,768 | 100.0 | 8.219 | 6.89 | 0.00024 | 0.76 | exact_match | 1896 |
+| qlora | Qwen2.5-0.5B-Instruct | task639_multi_woz_user_utterance_generation | 2,162,688 | 0.681629 | 5.859 | 2.01 | 0.5151 | 0.09048 | rougeL | 19.18 |
+| lora | Qwen2.5-0.5B-Instruct | task639_multi_woz_user_utterance_generation | 2,162,688 | 0.435854 | 5.072 | 1.55 | 0.3858 | 0.08455 | rougeL | 19.18 |
+| full_ft | Qwen2.5-0.5B-Instruct | task639_multi_woz_user_utterance_generation | 494,032,768 | 100.0 | 9.302 | 2.21 | 0.0005 | 0.0584 | rougeL | 1896 |
+| qlora | Qwen2.5-0.5B-Instruct | task843_financial_phrasebank_classification | 2,162,688 | 0.681629 | 6.661 | 7.25 | 0.0228 | 0.84 | exact_match | 19.18 |
+| lora | Qwen2.5-0.5B-Instruct | task843_financial_phrasebank_classification | 2,162,688 | 0.435854 | 5.733 | 5.54 | 0.02266 | 0.88 | exact_match | 19.18 |
+| full_ft | Qwen2.5-0.5B-Instruct | task843_financial_phrasebank_classification | 494,032,768 | 100.0 | 10.08 | 7.99 | 0.01105 | 0.9 | exact_match | 1896 |
+| qlora | Qwen2.5-1.5B-Instruct | task1344_glue_entailment_classification | 4,358,144 | 0.488048 | 6.35 | 16.78 | 0.00053 | 0.87 | exact_match | 27.55 |
+| lora | Qwen2.5-1.5B-Instruct | task1344_glue_entailment_classification | 4,358,144 | 0.281521 | 6.289 | 13.55 | 0.01189 | 0.86 | exact_match | 27.55 |
+| full_ft | Qwen2.5-1.5B-Instruct | task1344_glue_entailment_classification | 1,543,714,304 | 100.0 | 15.91 | 29.77 | 0.04476 | 0.81 | exact_match | 5900 |
+| qlora | Qwen2.5-1.5B-Instruct | task1564_triviaqa_answer_generation | 4,358,144 | 0.488048 | 4.64 | 2.62 | 0.00115 | 0 | rougeL | 27.55 |
+| lora | Qwen2.5-1.5B-Instruct | task1564_triviaqa_answer_generation | 4,358,144 | 0.281521 | 5.011 | 1.85 | 0.00118 | 0 | rougeL | 27.55 |
+| full_ft | Qwen2.5-1.5B-Instruct | task1564_triviaqa_answer_generation | 1,543,714,304 | 100.0 | 15.29 | 4.25 | 2e-05 | 0 | rougeL | 5900 |
+| qlora | Qwen2.5-1.5B-Instruct | task512_twitter_emotion_classification | 4,358,144 | 0.488048 | 4.918 | 14.53 | 0.0382 | 0.71 | exact_match | 27.55 |
+| lora | Qwen2.5-1.5B-Instruct | task512_twitter_emotion_classification | 4,358,144 | 0.281521 | 5.182 | 10.5 | 0.04013 | 0.67 | exact_match | 27.55 |
+| full_ft | Qwen2.5-1.5B-Instruct | task512_twitter_emotion_classification | 1,543,714,304 | 100.0 | 15.38 | 23.89 | 0.00227 | 0.73 | exact_match | 5900 |
+| qlora | Qwen2.5-1.5B-Instruct | task639_multi_woz_user_utterance_generation | 4,358,144 | 0.488048 | 5.75 | 4.75 | 0.3096 | 0.06834 | rougeL | 27.55 |
+| lora | Qwen2.5-1.5B-Instruct | task639_multi_woz_user_utterance_generation | 4,358,144 | 0.281521 | 5.803 | 3.69 | 0.3472 | 0.07383 | rougeL | 27.55 |
+| full_ft | Qwen2.5-1.5B-Instruct | task639_multi_woz_user_utterance_generation | 1,543,714,304 | 100.0 | 15.65 | 8.22 | 0.00062 | 0.09497 | rougeL | 5900 |
+| qlora | Qwen2.5-1.5B-Instruct | task843_financial_phrasebank_classification | 4,358,144 | 0.488048 | 6.354 | 16.78 | 0.00817 | 0.88 | exact_match | 27.55 |
+| lora | Qwen2.5-1.5B-Instruct | task843_financial_phrasebank_classification | 4,358,144 | 0.281521 | 6.281 | 13.34 | 0.0035 | 0.89 | exact_match | 27.55 |
+| full_ft | Qwen2.5-1.5B-Instruct | task843_financial_phrasebank_classification | 1,543,714,304 | 100.0 | 15.84 | 28.74 | 0.02142 | 0.9 | exact_match | 5900 |
+| qlora | SmolLM2-135M | task1344_glue_entailment_classification | 1,843,200 | 2.213415 | 4.934 | 3.85 | 0.3403 | 0.55 | exact_match | 10.43 |
+| lora | SmolLM2-135M | task1344_glue_entailment_classification | 1,843,200 | 1.351734 | 4.193 | 2.95 | 0.3364 | 0.41 | exact_match | 10.43 |
+| full_ft | SmolLM2-135M | task1344_glue_entailment_classification | 134,515,008 | 100.0 | 5.593 | 3.7 | 0.3464 | 0.41 | exact_match | 516.5 |
+| qlora | SmolLM2-135M | task1564_triviaqa_answer_generation | 1,843,200 | 2.213415 | 3.006 | 0.68 | 0.6684 | 0.04545 | rougeL | 10.43 |
+| lora | SmolLM2-135M | task1564_triviaqa_answer_generation | 1,843,200 | 1.351734 | 2.579 | 0.42 | 0.6929 | 0 | rougeL | 10.43 |
+| full_ft | SmolLM2-135M | task1564_triviaqa_answer_generation | 134,515,008 | 100.0 | 3.561 | 0.48 | 0.00259 | 0 | rougeL | 516.5 |
+| qlora | SmolLM2-135M | task512_twitter_emotion_classification | 1,843,200 | 2.213415 | 3.216 | 3.82 | 0.3555 | 0.5 | exact_match | 10.43 |
+| lora | SmolLM2-135M | task512_twitter_emotion_classification | 1,843,200 | 1.351734 | 2.78 | 2.52 | 0.3677 | 0.51 | exact_match | 10.43 |
+| full_ft | SmolLM2-135M | task512_twitter_emotion_classification | 134,515,008 | 100.0 | 3.79 | 2.85 | 0.08327 | 0.65 | exact_match | 516.5 |
+| qlora | SmolLM2-135M | task639_multi_woz_user_utterance_generation | 1,843,200 | 2.213415 | 4.32 | 1.08 | 2.015 | 0.07161 | rougeL | 10.43 |
+| lora | SmolLM2-135M | task639_multi_woz_user_utterance_generation | 1,843,200 | 1.351734 | 3.698 | 0.76 | 1.98 | 0.117 | rougeL | 10.43 |
+| full_ft | SmolLM2-135M | task639_multi_woz_user_utterance_generation | 134,515,008 | 100.0 | 4.934 | 0.93 | 0.9418 | 0.11 | rougeL | 516.5 |
+| qlora | SmolLM2-135M | task843_financial_phrasebank_classification | 1,843,200 | 2.213415 | 4.838 | 3.92 | 0.1878 | 0.71 | exact_match | 10.43 |
+| lora | SmolLM2-135M | task843_financial_phrasebank_classification | 1,843,200 | 1.351734 | 4.164 | 2.92 | 0.1795 | 0.88 | exact_match | 10.43 |
+| full_ft | SmolLM2-135M | task843_financial_phrasebank_classification | 134,515,008 | 100.0 | 5.436 | 3.63 | 0.09385 | 0.9 | exact_match | 516.5 |
