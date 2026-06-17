@@ -130,6 +130,13 @@ Assemble a per-task LoRA for your conditioning set. Version the tasks, the LoRAs
 
 **Phase 2 — Train the T2L-style hypernetwork (Weeks 4–6).**
 Implement a minimal text-conditioned hypernetwork; distill the library (the T2L/TAGI recipe, §1.1/§1.10); evaluate generated adapters on held-out tasks against three baselines: trained-LoRA (upper bound), base model (lower bound), and **nearest-neighbor retrieval of an existing library LoRA**.
+
+> **Training objective — SFT, *not* reconstruction (a project-defining choice).** T2L can be trained two ways (§1.1, Fig. 1): *reconstruction* (Eq. 6 — L1-regress the generated ΔW directly onto a target LoRA; **no base-model forward pass**) or *SFT* (Eq. 5 — apply the generated ΔW to the frozen base, run the task, and **backprop the task loss through the frozen 4-bit base into the hypernetwork**). We commit to **SFT**, for two reasons:
+> 1. **Generalization.** Reconstruction-trained T2L **fails to generalize to unseen tasks** (Table 6: 61.8 vs 66.3 avg; §5.4 / App. D — pre-trained LoRAs for similar tasks don't cluster in weight space), so only SFT can clear the held-out gate below.
+> 2. **The interp study depends on it.** Reconstruction trains the hypernetwork to *copy* hand-trained LoRAs in weight space — so a "generated vs. hand-trained feature geometry" comparison (the §C deliverable, run in Phase 3) would be **circular**: they'd match by construction, not by discovery. SFT lets the hypernetwork find its *own* solution, which is what makes "do generated adapters occupy the same/different feature geometry?" a real, non-trivial measurement.
+>
+> This is the memory-critical backprop-through-base path flagged in §B — a **VRAM** cost (gradient checkpointing / activation offload), *not* a system-RAM cost. *(Reconstruction is still useful as cheap Phase-0 plumbing — it gets the generate→apply loop green on a tiny model with no base-model backprop — but every gate-clearing run must be SFT.)*
+
 → **Gate (the critical one):** generated LoRAs beat the *retrieval* baseline on held-out tasks. If they don't, the hypernetwork isn't really generalizing, and any interp comparison is comparing against a non-functional adapter. **Stop and fix the output parameterization** (VeRA-style smaller target §2.4, DoRA decomposition §2.3, better distillation) before touching SAEs.
 
 **Phase 3 — The actual science (Weeks 7–9).**
