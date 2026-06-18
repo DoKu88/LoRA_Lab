@@ -176,6 +176,21 @@ Each sprint lists: **(1) Goal/objective · (2) Requirements (what needs to be ac
 3. **Definition of done:** the trade-off table is fully populated (every benchmarked technique has a row incl. free-VRAM headroom; non-fitting/not-run ones are marked, not blank); the **ablation study (`docs/phase-0.5-ablation-study.md` + `lever_ablation.{csv,parquet}`) is committed** — every stackable lever has an isolated contribution or an explicit load-bearing/n-a marking; each fitting technique has a **per-task held-out quality number** (with the not-converged caveat flagged where it applies); the memory-vs-iteration plots, speed-vs-memory scatter, and lever-contribution chart render from saved traces; the findings note with a clear recommendation (incl. the hypernetwork-headroom config) is committed; the table in `llm_optimizations.md` is updated (or linked) with the real numbers.
 4. **Required testing:** table schema validation (no silently-empty cells — every technique is either measured or explicitly `fits=no`/`not-run`); plots render from saved traces with correct axes/units (GB vs. step, s/step vs. GB); numbers in the table reconcile with the per-run traces; the recommended config re-runs from its committed YAML and reproduces its row within tolerance.
 
+### Sprint 8 — Follow-ups: deferred techniques + quality depth  *(needs S7; closes the remaining gaps)*
+
+1. **Goal:** Close the gaps left after the first overnight pass — the two deferred techniques (**MeZO**, **FSDP CPU-offload**), the **LOMO/AdaLOMO gradient-clipping** fix, a **harder second eval task**, and a **method-combination** study — so the trade-off picture is complete and quality-grounded, not just memory/speed.
+2. **Requirements:**
+   - **MeZO** (zeroth-order, forward-only): implement the two-forward seed-synchronized perturbation/update loop (no backward, no grads, no optimizer state); confirm the inference-level memory floor; measure quality (expected low in a 50-step budget — note it).
+   - **FSDP CPU-offload**: single-process FSDP with `CPUOffload(offload_params=True)` + transformer-layer auto-wrap; cross-check the DeepSpeed offload result; try fp32 and 8-bit optimizer.
+   - **LOMO/AdaLOMO + gradient clipping**: implement LOMO's two-pass clipped update (`grad_norm` retains the graph → `fused_backward` reuses it); sweep LR to find where the SGD-like optimizer learns (the shared 1e-5 is an Adam LR).
+   - **Second eval task** (`task1344` RTE entailment): re-run all working techniques on a harder task for cross-task quality signal.
+   - **Method-combination matrix**: stack memory tricks (e.g. BAdam + 8-bit), spend headroom (batch/no-ckpt), GaLore rank sweep.
+   - Fold every result into the findings tables and `llm_optimizations.md`; update the recommendation.
+3. **Definition of done:** MeZO and FSDP have rows (fits + VRAM + RAM + speed + eval, or `fits=no` with the memory-math reason); clipped-LOMO table present; dual-task (task843 + task1344) trade-off tables with an eval-quality column; combinations table; recommendation updated to reflect quality (not just memory/speed); all committed + pushed.
+4. **Required testing:** MeZO confirmed forward-only (no grads; VRAM ≈ inference floor); FSDP within both memory ceilings *or* `fits=no` reconciled with the offload memory-math; clipped LOMO does not diverge (loss bounded) and clears chance on eval; per-technique eval scores reconcile across the two tasks (ranking stable); table schema validation (no silently-empty cells).
+
+> **Status: ✅ complete.** MeZO (13.8 GB forward-only floor; eval ~0 at 50 steps — needs far more), clipped LOMO (0.84 EM @ lr 5e-4 — the headroom winner), dual-task eval (task843 + task1344), and the combinations matrix (BAdam+8bit → 15.7 GB @ 0.80 EM) are all in the findings. FSDP CPU-offload: see findings (offload family). Results: `results/phase05/{feasibility_table,feasibility_table_task1344,combinations,clipped_lomo}.{csv,parquet,md}`.
+
 ---
 
 ## Parallelism map

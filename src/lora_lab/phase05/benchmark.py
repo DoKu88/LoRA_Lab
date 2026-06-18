@@ -84,17 +84,27 @@ def _offload(config: RunConfig) -> dict:
     return run_offload(config)
 
 
+def _mezo(config: RunConfig) -> dict:
+    from .strategies.mezo import run_mezo
+    return run_mezo(config)
+
+
+def _fsdp(config: RunConfig) -> dict:
+    from .strategies.fsdp import run_fsdp
+    return run_fsdp(config)
+
+
 # Registry: technique name -> strategy fn. Sprints 2-5 replace the stubs.
 STRATEGIES: dict[str, Callable[[RunConfig], dict]] = {
     "baseline": _strategy_baseline,
     "zero_offload": _offload,
-    "fsdp_offload": _not_implemented("Sprint 3"),
+    "fsdp_offload": _fsdp,
     "galore": _galore,
     "qgalore": _galore,
     "lomo": _lomo,
     "adalomo": _lomo,
     "badam": _badam,
-    "mezo": _not_implemented("Sprint 5"),
+    "mezo": _mezo,
     "zero_infinity": _not_implemented("Sprint 5"),
 }
 
