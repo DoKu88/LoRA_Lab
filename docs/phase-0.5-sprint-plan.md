@@ -6,13 +6,17 @@
 
 ## What we are trying to achieve in Phase 0.5
 
-One question, answered with measurements:
+Two questions, answered with measurements:
 
-> **Given 32 GB VRAM + 96 GB system RAM, can we run a *true full-parameter* fine-tune of `Mistral-7B-Instruct-v0.2` on this box — by which route, at what cost in speed and quality, and which route is fastest?**
+> **(A) Feasibility & fastest route** — Given 32 GB VRAM + 96 GB system RAM, can we run a *true full-parameter* fine-tune of `Mistral-7B-Instruct-v0.2` on this box — by which route, at what cost in speed and quality, and which route is fastest?
+>
+> **(B) Per-optimization contribution & headroom** — *How much* does each individual memory optimization buy us (VRAM/RAM/speed), measured **in isolation** — even when an earlier optimization already made the run fit? We are not just trying to get Mistral-7B to *run*; we will stack a **hypernetwork on top of it later** (Phases 2+), so we need to know the **VRAM headroom** each lever frees, to budget for that addition.
 
-With 96 GB RAM the answer is *likely yes* (CPU offload is now unblocked), so the spike's real job is **not** to prove feasibility but to **quantify the trade-offs** across the candidate techniques and recommend the fastest viable route.
+With 96 GB RAM the answer to (A) is *likely yes* (CPU offload is now unblocked), so the spike's real job is **not** to prove feasibility but to **quantify the trade-offs**: which primary route is fastest, and **what each stackable lever individually contributes** to memory headroom and speed.
 
-**The headline deliverable** is a filled-in **technique × trade-off table** — one row per technique, measuring its effect on **peak VRAM**, **peak system RAM**, and **training speed (wall-clock / step + tokens/s)**, plus whether it fits and an eval-quality spot-check. This is the table skeleton already in [`llm_optimizations.md`](./llm_optimizations.md) ("Results to fill in (per technique)"); Phase 0.5 populates it with real numbers from this hardware.
+**Why isolate each lever (B) even if we already fit:** the natural temptation is to stop applying optimizations once a config fits in 32 GB. But "it fits" with zero headroom is useless here — the hypernetwork's parameters, its activations, and the backprop-through-base path (flagged in [`../notes.md`](../notes.md) §B) all need VRAM that the bare 7B full-FT doesn't account for. So every lever is benchmarked **on its own**, against a common reference config, to measure its standalone ΔVRAM / ΔRAM / Δspeed — turning "does it fit" into "*how much room is left, and which lever bought it*."
+
+**The headline deliverable** is a filled-in **technique × trade-off table** — one row per technique, measuring its effect on **peak VRAM**, **peak system RAM**, **training speed (wall-clock / step + tokens/s)**, and **free-VRAM headroom (32 − peak)**, plus whether it fits and an eval-quality number. A companion **lever-ablation table** (objective B) reports each stackable optimization's *isolated marginal* contribution. The technique table fills the skeleton already in [`llm_optimizations.md`](./llm_optimizations.md) ("Results to fill in (per technique)"); Phase 0.5 populates both with real numbers from this hardware.
 
 **Secondary deliverable:** at least one **working, committed config** that full-finetunes Mistral-7B end-to-end here, plus a short **feasibility note** with the memory math, the measured table, and a recommendation: *fastest viable route*, and *the speed-vs-quality trade-off* (so we can later decide whether to pay for a slower-but-better full FT or stick with a faster approximate one).
 
@@ -29,7 +33,7 @@ With 96 GB RAM the answer is *likely yes* (CPU offload is now unblocked), so the
 - **Two technique families, different trade-offs** (the spike measures the gap between them):
   - **Offload** (ZeRO-Offload / FSDP CPU-offload, §2.6/§2.10) — simplest path to a *working* full FT; PCIe-bound, so slower per step. Holds ~70 GB (fp32 Adam) / ~28 GB (8-bit Adam) in RAM — **fits in 96 GB**.
   - **VRAM-direct** (GaLore/Q-GaLore §2.9/§2.11, LOMO/AdaLOMO §2.12, BAdam §2.13, MeZO §2.14) — keeps the optimizer on-GPU; should be *faster*, at the cost of approximations to the true update.
-  - **Stackable levers** (8-bit/paged Adam §2.8, gradient checkpointing §2.7, activation offload, drop fp32 master copy) multiply the headroom of whichever primary technique is chosen.
+  - **Stackable levers** (8-bit/paged Adam §2.8, gradient checkpointing §2.7, activation offload, drop fp32 master copy) multiply the headroom of whichever primary technique is chosen. **Each is also measured in isolation** (Sprint 6 ablation) so we know its standalone contribution — not just whether the stack happened to fit.
 - **"Full-parameter" is non-negotiable for this spike.** LoRA/QLoRA are out of scope here (that was Phase 0). Every gate-clearing run must update *all* model weights (BAdam cycling through all blocks over the run still counts; LoRA does not).
 - **Single GPU ⇒ training runs serialize.** "Parallel sprints" means parallel *development*; the actual benchmark runs queue on the one GPU. Schedule the long offload runs accordingly.
 - **Fixed measurement protocol** so rows are comparable: same base (`Mistral-7B-Instruct-v0.2`), same 1–2 SNI task(s), **fixed batch size, sequence length, and seed** across every technique. Measure peak VRAM with `torch.cuda.max_memory_allocated()` per phase (§B); measure peak RAM with a sampled RSS probe.
@@ -50,16 +54,16 @@ Mirrors the suggested order in [`llm_optimizations.md`](./llm_optimizations.md):
 | 8 | **MeZO** | VRAM-direct | last resort; forward-only, slow/noisy |
 | — | **ZeRO-Infinity (NVMe)** | Offload | **fallback only** — run *only if* 96 GB RAM unexpectedly pinches |
 
-Stackable levers (8-bit Adam, gradient checkpointing, drop-fp32, activation offload) are applied/ablated *within* the relevant rows rather than as standalone techniques.
+For the *primary*-technique rows above, stackable levers are applied as needed to make the run fit. Their **isolated marginal contributions** are measured separately in the **Sprint 6 lever-ablation study** — so "we didn't need lever X to fit" never means "we don't know what lever X is worth."
 
 ### Proposed repo layout (extends the Phase 0 layout)
 
 ```
 src/lora_lab/methods/fullft/   one module per technique (galore.py, lomo.py, badam.py, mezo.py, offload.py …)
 src/lora_lab/utils/            extend the VRAM helper with a host-RAM (RSS) probe
-configs/phase05/               one YAML per technique run (technique × stackable-levers × hparams)
-results/phase05/               feasibility_table.{csv,parquet} + table.md · mem_trace/ · plots/
-docs/phase-0.5-findings.md     the feasibility note (written in Sprint 6)
+configs/phase05/               one YAML per technique run + one per lever-ablation cell (technique × stackable-levers × hparams)
+results/phase05/               feasibility_table.{csv,parquet} + lever_ablation.{csv,parquet} + table.md · mem_trace/ · plots/
+docs/phase-0.5-findings.md     the feasibility note (written in Sprint 7)
 ```
 
 ---
@@ -68,7 +72,7 @@ docs/phase-0.5-findings.md     the feasibility note (written in Sprint 6)
 
 Each sprint lists: **(1) Goal/objective · (2) Requirements (what needs to be accomplished) · (3) Definition of done · (4) Required testing.**
 
-> **W&B applies to every technique run.** Sprints 2–5 all execute through the Sprint 1 `benchmark()` harness, so each technique run **logs to W&B by construction** (live VRAM/RAM/loss curves + final summary row + config snapshot, named `MM_DD_YYYY_HR_MM_SEC_mistral7B_<technique>`). It stays **best-effort/non-blocking** with an offline-local fallback — never a gate (project working pref). The Sprint 6 report aggregates these runs.
+> **W&B applies to every run.** Sprints 2–6 (technique runs *and* lever-ablation runs) all execute through the Sprint 1 `benchmark()` harness, so each run **logs to W&B by construction** (live VRAM/RAM/loss curves + final summary row + config snapshot, named `MM_DD_YYYY_HR_MM_SEC_mistral7B_<technique-or-lever>`). It stays **best-effort/non-blocking** with an offline-local fallback — never a gate (project working pref). The Sprint 7 report aggregates these runs.
 
 ### Sprint 1 — Memory Math, Measurement Harness & RAM Probe  *(BLOCKER — must finish first)*
 
@@ -136,17 +140,35 @@ Each sprint lists: **(1) Goal/objective · (2) Requirements (what needs to be ac
 3. **Definition of done:** BAdam and MeZO rows captured (fits / VRAM / RAM / wall-clock / quality-spot-check); NVMe row either captured (if triggered) or explicitly marked not-needed with justification; BAdam confirmed to cover all blocks over the run (full-param).
 4. **Required testing:** BAdam — verify every block is visited (full-param coverage), loss decreases across cycles, wall-clock penalty quantified vs. baseline; MeZO — convergence-trend check over many forward passes, memory confirmed at inference level; NVMe (if run) — memory ceilings + SSD-throughput note.
 
-### Sprint 6 — Trade-off Table, Plots & Feasibility Note  *(needs S2–S5; the headline deliverable)*
+### Sprint 6 — Stackable-Lever Ablation (isolate each optimization's contribution)  *(needs S1 + a feasible reference config from S2/S4; objective B)*
 
-1. **Goal:** Assemble the populated **technique × trade-off table**, the comparison plots, and the recommendation — the artifact the whole spike exists to produce.
+1. **Goal:** Measure the **isolated marginal contribution** of each stackable optimization — 8-bit/paged Adam, gradient checkpointing, activation offload, drop-fp32-master-copy, and optimizer-offload-itself — to peak VRAM, peak RAM, and step time. This is the answer to "how much does each lever buy us," independent of whether it was *needed* to fit, so we can budget VRAM headroom for the hypernetwork we'll add on top.
 2. **Requirements:**
-   - Aggregate every technique's summary row into `results/phase05/feasibility_table.{csv,parquet}` and render the Markdown table with columns: `technique, config/flags, fits (≤32GB VRAM / ≤96GB RAM), peak_vram_gb, peak_ram_gb, wallclock_per_step_s, tokens_per_s, eval_quality, notes` — i.e. fill in the skeleton already in [`llm_optimizations.md`](./llm_optimizations.md).
+   - **Pick two reference frames** (anchors), both full-param Mistral-7B on the fixed protocol:
+     - an **offload anchor** (the Sprint 2 ZeRO config) for the offload-side levers (8-bit Adam, optimizer-offload, activation offload), and
+     - an **on-GPU anchor** (a Sprint 4 config such as GaLore) for the VRAM-direct-side levers (gradient checkpointing, drop-fp32).
+     A lever is benchmarked against whichever anchor it meaningfully applies to (some, like gradient checkpointing, apply to both — measure on both).
+   - **Two complementary sweeps per anchor**, so we capture both standalone effect and interaction:
+     - **Add-one-in** — from a minimal config (levers off, raising batch/seq only as far as still-feasible), toggle each lever **on alone** and measure the delta.
+     - **Leave-one-out** — from the full stack (all levers on), toggle each lever **off alone** and measure the delta. (When a lever is load-bearing — removing it OOMs — that *is* the result: record `fits=no` and the OOM point as its contribution.)
+   - For each cell, change **exactly one flag** vs. its anchor; run the fixed protocol through the same `benchmark()` harness; record the VRAM+RAM-vs-iteration trace + summary row, tagged with `{anchor, lever, direction}`.
+   - Emit `results/phase05/lever_ablation.{csv,parquet}` with per-lever **ΔVRAM_gb, ΔRAM_gb, Δwallclock_per_step_s, Δtokens_per_s**, and a **freed-VRAM headroom** figure per lever.
+   - *Note the cost:* this is the sprint that most expands the overnight run (≈ 2 anchors × ~4 levers × 2 directions ≈ 12–16 extra short runs) — acceptable given the overnight window, but the first thing to trim if time-boxed (see scope-cut order).
+3. **Definition of done:** the lever-ablation table is populated — every stackable lever has a measured isolated ΔVRAM / ΔRAM / Δspeed (or an explicit "load-bearing: removing it OOMs" / "n/a for this anchor" marking); a **recommended headroom config** is identified (the lever stack that leaves the most free VRAM at acceptable speed, for the hypernetwork to live in); results feed the Sprint 7 table/note.
+4. **Required testing:** assert each ablation cell differs from its anchor by **exactly one flag** (config diff check); sign/direction sanity (gradient checkpointing ↓VRAM but ↑step-time; 8-bit Adam ↓optimizer-state RAM/VRAM; drop-fp32 ↓VRAM slightly); deltas reconcile with the memory math (±tolerance); add-one-in and leave-one-out agree in sign for each lever (flag large disagreement as an interaction effect worth a note).
+
+### Sprint 7 — Trade-off Table, Plots & Feasibility Note  *(needs S2–S6; the headline deliverable)*
+
+1. **Goal:** Assemble the populated **technique × trade-off table**, the **lever-ablation table**, the comparison plots, and the recommendation — the artifact the whole spike exists to produce.
+2. **Requirements:**
+   - Aggregate every technique's summary row into `results/phase05/feasibility_table.{csv,parquet}` and render the Markdown table with columns: `technique, config/flags, fits (≤32GB VRAM / ≤96GB RAM), peak_vram_gb, peak_ram_gb, free_vram_headroom_gb (32 − peak), wallclock_per_step_s, tokens_per_s, eval_quality, notes` — i.e. fill in the skeleton already in [`llm_optimizations.md`](./llm_optimizations.md). The **headroom column directly answers "how much room is left for the hypernetwork"** under each route.
+   - **Render the lever-ablation table** (from Sprint 6's `lever_ablation.{csv,parquet}`): per-lever isolated **ΔVRAM / ΔRAM / Δspeed** and freed headroom, so the marginal value of each optimization is legible on its own.
    - **Add a relative-effect view** the user asked for: each technique's VRAM and **speed** expressed relative to the offload baseline (e.g. ×slower, % VRAM), so the speed-vs-memory trade-off is legible at a glance.
-   - **Render comparison plots:** overlay per-technique **VRAM-vs-iteration** and **RAM-vs-iteration** from `results/phase05/mem_trace/`; plus a **speed-vs-peak-memory scatter** (wall-clock/step on one axis, peak VRAM on the other) so the Pareto front is visible.
+   - **Render comparison plots:** overlay per-technique **VRAM-vs-iteration** and **RAM-vs-iteration** from `results/phase05/mem_trace/`; a **speed-vs-peak-memory scatter** (wall-clock/step on one axis, peak VRAM on the other) so the Pareto front is visible; and a **lever-contribution bar chart** (freed VRAM per lever) for objective B.
    - **Quality eval (full):** run each technique's checkpoint over the **full held-out set of all fixed-protocol SNI tasks** (same SNI metric as Phase 0 — exact-match / ROUGE-L), so the "train longer for a better result" trade-off is grounded in a real per-task quality number, not just speed. Eval is inference-only and cheap relative to the training runs (~+1.5–4 h total across all techniques on one GPU), so it's affordable within the overnight benchmark window. **Caveat:** for noisy/slow methods (esp. MeZO, and BAdam mid-cycle) the short benchmark run may not have converged — report their quality as "where it reached at N steps," not as a fair quality verdict, and flag this in the table notes.
-   - Write `docs/phase-0.5-findings.md`: memory math vs. measured reality, the table, the plots, and an explicit **recommendation** — *fastest viable route* and *the speed↔quality trade-off* for choosing a slower-but-better full FT later.
+   - Write `docs/phase-0.5-findings.md`: memory math vs. measured reality, both tables, the plots, and an explicit **recommendation** — *fastest viable route*, *the speed↔quality trade-off*, and a **recommended headroom config for the hypernetwork** (which route + lever stack leaves enough free VRAM for Phase 2's hypernetwork while staying fast enough).
    - Push a W&B report (best-effort, per §B — never a gate).
-3. **Definition of done:** the trade-off table is fully populated (every benchmarked technique has a row; non-fitting/not-run ones are marked, not blank); each fitting technique has a **per-task held-out quality number** (with the not-converged caveat flagged where it applies); both memory-vs-iteration plots and the speed-vs-memory scatter render from saved traces; the findings note with a clear recommendation is committed; the table in `llm_optimizations.md` is updated (or linked) with the real numbers.
+3. **Definition of done:** the trade-off table is fully populated (every benchmarked technique has a row incl. free-VRAM headroom; non-fitting/not-run ones are marked, not blank); the **lever-ablation table is populated** (every stackable lever has an isolated contribution or an explicit load-bearing/n-a marking); each fitting technique has a **per-task held-out quality number** (with the not-converged caveat flagged where it applies); the memory-vs-iteration plots, speed-vs-memory scatter, and lever-contribution chart render from saved traces; the findings note with a clear recommendation (incl. the hypernetwork-headroom config) is committed; the table in `llm_optimizations.md` is updated (or linked) with the real numbers.
 4. **Required testing:** table schema validation (no silently-empty cells — every technique is either measured or explicitly `fits=no`/`not-run`); plots render from saved traces with correct axes/units (GB vs. step, s/step vs. GB); numbers in the table reconcile with the per-run traces; the recommended config re-runs from its committed YAML and reproduces its row within tolerance.
 
 ---
@@ -168,15 +190,21 @@ Each sprint lists: **(1) Goal/objective · (2) Requirements (what needs to be ac
  └─────┬──────┘ └─────┬──────┘ └──────┬───────┘ └─────┬──────┘
        └──────────────┴───────┬───────┴───────────────┘
                              ▼
-            ┌────────────────────────────────────┐
-            │ S6 — Trade-off table + plots + note │
-            └────────────────────────────────────┘
+            ┌──────────────────────────────────────────────┐
+            │ S6 — Lever ablation (isolate each lever's Δ)   │  ← needs a feasible anchor from S2/S4
+            └───────────────────────┬──────────────────────┘
+                                    ▼
+            ┌────────────────────────────────────────────┐
+            │ S7 — Trade-off + ablation tables + plots +   │
+            │      feasibility note                        │
+            └────────────────────────────────────────────┘
 ```
 
-- **Sprint 1** is a hard blocker — no technique is benchmarked until the measurement protocol + RAM probe are green (otherwise rows aren't comparable).
+- **Sprint 1** is a hard blocker — no run is benchmarked until the measurement protocol + RAM probe are green (otherwise rows aren't comparable).
 - **Sprints 2–5** are independent *development* tracks against the shared `benchmark()` interface.
-- **Single-GPU caveat:** "parallel" = parallel *development*. Actual benchmark *runs* serialize on the one 32 GB GPU — schedule the long offload runs (S2/S3) so they don't block the cheaper VRAM-direct runs.
-- **Sprint 6** needs all technique rows.
+- **Sprint 6** (lever ablation) needs a feasible anchor config to exist first (from S2 for offload-side levers, S4 for on-GPU-side levers) — but reuses the same harness, so it's mostly extra *runs*, not extra code.
+- **Single-GPU caveat:** "parallel" = parallel *development*. Actual benchmark *runs* serialize on the one 32 GB GPU — schedule the long offload runs (S2/S3) and the ablation sweep (S6) so they don't block the cheaper VRAM-direct runs.
+- **Sprint 7** needs all technique rows + the ablation table.
 
 ---
 
@@ -185,10 +213,11 @@ Each sprint lists: **(1) Goal/objective · (2) Requirements (what needs to be ac
 Phase 0.5 is a **time-boxed spike**, not an open-ended optimization project. If it runs over, cut *scope* in this order (cheapest signal preserved longest):
 
 1. Drop **MeZO** (Sprint 5) — last-resort method; a documented "too slow/noisy to bother" is an acceptable row.
-2. Drop **AdaLOMO** and **FSDP** as *second* data points (keep LOMO and ZeRO-Offload as the family representatives).
-3. Drop the **NVMe fallback** unless RAM actually pinched.
+2. Trim the **lever ablation** (Sprint 6) from both-directions to **leave-one-out only** on a **single anchor** (the offload one) — still yields each lever's marginal contribution, at half the runs. Drop the add-one-in sweep first.
+3. Drop **AdaLOMO** and **FSDP** as *second* data points (keep LOMO and ZeRO-Offload as the family representatives).
+4. Drop the **NVMe fallback** unless RAM actually pinched.
 
-**Never cut:** Sprint 1 (the protocol), Sprint 2 (the one working feasibility proof), and Sprint 6 (the table + recommendation). Those three are the minimum that answers the spike's question.
+**Never cut:** Sprint 1 (the protocol), Sprint 2 (the one working feasibility proof), a **minimal Sprint 6** (at least leave-one-out on the offload anchor — objective B is an explicit ask, headroom for the hypernetwork depends on it), and Sprint 7 (the tables + recommendation). Those are the minimum that answers both questions the spike exists for.
 
 ---
 
@@ -198,4 +227,4 @@ Carried from [`../notes.md`](../notes.md) §C2 Phase 0.5:
 
 > A short **feasibility note** with the memory math + **measured peak VRAM *and* peak system RAM + wall-clock per technique**, and a **working config that full-finetunes Mistral-7B end-to-end here** (expected via offload at minimum), **plus a recommendation on the fastest viable route**.
 
-Concretely, the gate clears when: (1) at least one committed config provably full-finetunes Mistral-7B on this box within both memory ceilings; (2) the technique × trade-off table is populated for every benchmarked technique; and (3) the findings note states the fastest viable route and the speed↔quality trade-off. Clearing this gate decides whether — and how cheaply — full FT of a 7B stays an option later in the project rather than being small-model-only.
+Concretely, the gate clears when: (1) at least one committed config provably full-finetunes Mistral-7B on this box within both memory ceilings; (2) the technique × trade-off table (incl. free-VRAM headroom) is populated for every benchmarked technique; (3) the **lever-ablation table** reports each stackable optimization's isolated contribution (objective B); and (4) the findings note states the fastest viable route, the speed↔quality trade-off, and a **recommended headroom config that leaves room for the Phase 2 hypernetwork**. Clearing this gate decides whether — and how cheaply, *and with how much headroom for the hypernetwork* — full FT of a 7B stays an option later in the project rather than being small-model-only.
