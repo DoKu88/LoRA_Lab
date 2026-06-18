@@ -62,17 +62,24 @@ ABLATION_CELLS = [
 # techniques leave free, and whether levers stack onto them. Mostly LOMO (the
 # recommended route) since its ~17 GB free is what invites combination.
 COMBO_MATRIX = [
-    # throughput: spend LOMO's headroom on a bigger batch (fused = no accum)
-    ("lomo_bs4", {"technique.name": "lomo", "hparams.batch_size": "4",
-                  "levers.gradient_checkpointing": "true"}),
-    ("lomo_bs8", {"technique.name": "lomo", "hparams.batch_size": "8",
-                  "levers.gradient_checkpointing": "true"}),
-    # speed: LOMO is light enough it may not need checkpointing — drop the recompute
-    ("lomo_nockpt", {"technique.name": "lomo", "levers.gradient_checkpointing": "false"}),
-    # combine both: bigger batch AND no checkpointing
-    ("lomo_bs4_nockpt", {"technique.name": "lomo", "hparams.batch_size": "4",
-                         "levers.gradient_checkpointing": "false"}),
-    # block-coordinate + 8-bit base optimizer (stack two memory tricks)
+    # LOMO LR sweep — the shared 1e-5 is an *Adam* LR and far too small for the
+    # SGD-like LOMO (it scored eval 0.0 at 1e-5). Find where it actually learns.
+    ("lomo_lr1e4", {"technique.name": "lomo", "hparams.lr": "1e-4",
+                    "levers.gradient_checkpointing": "true"}),
+    ("lomo_lr5e4", {"technique.name": "lomo", "hparams.lr": "5e-4",
+                    "levers.gradient_checkpointing": "true"}),
+    ("lomo_lr1e3", {"technique.name": "lomo", "hparams.lr": "1e-3",
+                    "levers.gradient_checkpointing": "true"}),
+    ("adalomo_lr1e3", {"technique.name": "adalomo", "hparams.lr": "1e-3",
+                       "levers.gradient_checkpointing": "true"}),
+    # once LOMO learns: spend its ~17 GB headroom on throughput (batch 8) ...
+    ("lomo_bs8_lr5e4", {"technique.name": "lomo", "hparams.batch_size": "8",
+                        "hparams.lr": "5e-4", "levers.gradient_checkpointing": "true"}),
+    # ... and on dropping checkpointing (it's light enough) for speed
+    ("lomo_nockpt_lr5e4", {"technique.name": "lomo", "hparams.lr": "5e-4",
+                           "levers.gradient_checkpointing": "false"}),
+    # stack memory tricks on the Adam-based winners (fine at 1e-5):
+    # block-coordinate + 8-bit base optimizer
     ("badam_8bit", {"technique.name": "badam", "technique.badam_switch_every": "5",
                     "levers.use_8bit_adam": "true", "levers.gradient_checkpointing": "true"}),
     # GaLore rank sweep: lower rank = less projection state (memory/quality knob)
