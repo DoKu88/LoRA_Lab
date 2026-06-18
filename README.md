@@ -25,9 +25,53 @@ Current work treats the hypernetwork as a black box judged only on downstream ac
 | `docs/` | Sprint-planning material. `docs/phase-0-sprint-plan.md` breaks the first engineering phase into sprints. |
 | `pdfs/` | Source PDFs, numbered by section (gitignored — large binaries). |
 
-## Current status & next steps
+## Phase 0 harness (implemented)
 
-This is currently a **literature-review and scoping phase** — no training code yet. Open decisions to settle before writing code (see `notes.md §A`):
+The Phase 0 three-way comparison harness lives under `src/lora_lab/` with entrypoints in `scripts/`. Reproduce the dedicated Blackwell/sm_120 env and run it:
+
+```bash
+# 1. dedicated env (RTX 5090, CUDA 12.8, sm_120) — one command
+conda env create -f environment.yml      # creates `lora_lab`
+
+# 2. toolchain smoke test (4-bit NF4 + LoRA + bf16, asserts sm_120)
+conda run -n lora_lab python scripts/smoke_test.py
+
+# 3. unit tests (CPU-only; no GPU needed)
+conda run -n lora_lab python -m pytest
+
+# 4. one run (config-driven). --dry-run synthesizes a full run with no GPU
+conda run -n lora_lab python scripts/train.py --config configs/runs/example-lora-smol-financial.yaml
+
+# 5. the comparison matrix, smallest-first (trains + evals every cell)
+conda run -n lora_lab python scripts/run_matrix.py --tier ungated \
+    --max-train-samples 500 --epochs 3 --max-eval-samples 100
+#    --tier {ungated|gated|all}: pick a preset ladder instead of --models.
+#    `all` runs the full five-rung ladder (gated rungs need HF_TOKEN).
+conda run -n lora_lab python scripts/run_matrix.py --tier all \
+    --max-train-samples 500 --epochs 3 --max-eval-samples 100
+#    or drive the whole sweep from a YAML file (CLI flags still override it);
+#    the resolved config is saved under results/runs/_matrix/ per run.
+conda run -n lora_lab python scripts/run_matrix.py --config configs/matrix/run-matrix.yaml
+
+# 6. (re)build the deliverable table + memory-vs-iteration plots from run dirs
+conda run -n lora_lab python scripts/build_table.py
+```
+
+| Path | Contents |
+|---|---|
+| `src/lora_lab/config.py` | `RunConfig` dataclasses; YAML round-trip; dotted overrides |
+| `src/lora_lab/data/` | deterministic SNI loaders (`configs/tasks.yaml`, pinned split hashes) |
+| `src/lora_lab/methods/` | the three backends: full FT (fp32 master + bf16 autocast), LoRA, QLoRA |
+| `src/lora_lab/train/` | shared `train(config)` loop, `RunLogger` (local + best-effort W&B), VRAM tracer |
+| `src/lora_lab/eval/` | exact-match / ROUGE-L, comparison table, memory-overlay plot |
+| `src/lora_lab/matrix.py` | model ladder (by HF id) + per-model presets for the sweep |
+| `results/` | `comparison.{csv,parquet,md}` · `mem_trace/` · `plots/` |
+
+**Model ladder (ungated):** SmolLM2-135M → Qwen2.5-0.5B-Instruct → Qwen2.5-1.5B-Instruct. The gated Gemma-2-2B / Llama-3.2 rungs are a follow-on (Sprint 7) — see [`docs/gated-models-setup.md`](./docs/gated-models-setup.md). To sweep the full five-rung ladder (ungated + gated) in one go, run `run_matrix.py --tier all` once an `HF_TOKEN` is set. Findings: [`docs/phase-0-findings.md`](./docs/phase-0-findings.md).
+
+## Project status & next steps
+
+The broader project is otherwise in a **literature-review and scoping phase**. Open decisions to settle (see `notes.md §A`):
 
 - **Conditioning signal** for v0 (recommended: text task-description, most reproducible).
 - **Output parameterization** — full A/B matrices vs. VeRA-style scalings vs. per-layer factors (output dimensionality dominates trainability and memory; start small).

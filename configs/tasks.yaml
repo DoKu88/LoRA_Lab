@@ -1,0 +1,69 @@
+tasks:
+  task1344_glue_entailment_classification:
+    hf_repo: Lots-of-LoRAs/task1344_glue_entailment_classification
+    kind: classification
+    metric: exact_match
+    description: 'RTE-style entailment: given premise + hypothesis, answer 0 (entailment)
+      or 1 (not entailment).'
+    split_hashes:
+      train: a0bdfe5f19fc
+      test: 2e9bf0577154
+      valid: 8a06a398d023
+    split_sizes:
+      train: 1984
+      test: 248
+      valid: 248
+  task843_financial_phrasebank_classification:
+    hf_repo: Lots-of-LoRAs/task843_financial_phrasebank_classification
+    kind: classification
+    metric: exact_match
+    description: 'Financial PhraseBank sentiment: classify a sentence as positive
+      / negative / neutral.'
+    split_hashes:
+      train: ecde37fedf4b
+      test: 4ce5e10f6600
+      valid: 40d961425cca
+    split_sizes:
+      train: 1444
+      test: 181
+      valid: 180
+  task512_twitter_emotion_classification:
+    hf_repo: Lots-of-LoRAs/task512_twitter_emotion_classification
+    kind: classification
+    metric: exact_match
+    description: Classify the emotion expressed in a tweet.
+    split_hashes:
+      train: c451b362ca8b
+      test: 0c46270c4da3
+      valid: 60bce296db40
+    split_sizes:
+      train: 2743
+      test: 343
+      valid: 343
+  task639_multi_woz_user_utterance_generation:
+    hf_repo: Lots-of-LoRAs/task639_multi_woz_user_utterance_generation
+    kind: generation
+    metric: rougeL
+    description: 'MultiWOZ: generate a plausible user query that would lead to the
+      given system response.'
+    split_hashes:
+      train: fc0cab9db830
+      test: f4d5c125c184
+      valid: ea6a4c486415
+    split_sizes:
+      train: 142
+      test: 18
+      valid: 18
+  task1564_triviaqa_answer_generation:
+    hf_repo: Lots-of-LoRAs/task1564_triviaqa_answer_generation
+    kind: generation
+    metric: rougeL
+    description: TriviaQA short free-form answer generation.
+    split_hashes:
+      train: d12e7d9970a5
+      test: fd93c9215b83
+      valid: 6b9a29d21a7d
+    split_sizes:
+      train: 87
+      test: 11
+      valid: 11

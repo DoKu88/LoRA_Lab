@@ -26,13 +26,17 @@ Two goals, delivered together:
 
 ### Model ladder (apples-to-apples, smallest → up)
 
-| Rung | Model | Role |
-|---|---|---|
-| 0 | SmolLM2-135M / Qwen2.5-0.5B-Instruct | end-to-end plumbing; get all three methods green fast |
-| 1 | Llama-3.2-1B-Instruct *(optional middle)* | quick iteration between tiny and 2B |
-| 2 | **Gemma-2-2B-Instruct** | top of Phase 0; full FT here is the VRAM stress test |
+> **Ungated-first decision (2026-06-17).** Gemma-2-2B-Instruct and the Llama-3.2 models are **gated** on HuggingFace (need an accepted license + an `HF_TOKEN`). To keep Phase 0 fully autonomous with no credentials, the ladder below uses **ungated** models end-to-end. Swapping the gated Gemma/Llama bases back in is split out as **Sprint 7** (a follow-on test once a token is available). The harness is model-agnostic — only the config's `base_model` changes.
 
-All three methods (full FT, LoRA, QLoRA) run on the **same** base at each rung, so the comparison stays controlled.
+| Rung | Model | Gated? | Role |
+|---|---|---|---|
+| 0 | **SmolLM2-135M** | no | end-to-end plumbing; get all three methods green fast |
+| 1 | **Qwen2.5-0.5B-Instruct** | no | small instruct model; fast iteration |
+| 2 | **Qwen2.5-1.5B-Instruct** | no | top of ungated Phase 0; full FT here is the VRAM stress test |
+| 3 | Gemma-2-2B-Instruct *(Sprint 7)* | **yes** | gated stress rung — run once `HF_TOKEN` is set |
+| — | Llama-3.2-1B-Instruct *(Sprint 7, optional)* | **yes** | gated cross-family check |
+
+All three methods (full FT, LoRA, QLoRA) run on the **same** base at each rung, so the comparison stays controlled. **Execution order is smallest-first:** confirm the full pipeline on SmolLM2-135M, then ladder up to Qwen2.5-0.5B and Qwen2.5-1.5B.
 
 ### Proposed repo layout (created during the sprints)
 
@@ -121,6 +125,24 @@ Each sprint lists: **(1) Goal/objective · (2) What needs to be accomplished · 
    - Build a W&B report; write a short findings summary (what differs across the three regimes in quality/memory/speed/params).
 3. **Definition of done:** complete comparison table + dataset committed; W&B dashboard/report shared; findings note written; every run reproducible from its config.
 4. **Required testing:** full-pipeline re-run from config on at least one cell to confirm reproducibility; sanity bounds on metrics (LoRA/QLoRA within an expected gap of full FT); assert VRAM never exceeds 32 GB across the matrix.
+
+### Sprint 7 — Gated-model follow-on (Gemma-2-2B / Llama-3.2)  *(NEW — needs all + an HF token)*
+
+1. **Goal:** Re-run the validated Phase 0 pipeline on the **gated** bases (Gemma-2-2B-Instruct, optionally Llama-3.2-1B-Instruct) to confirm the comparison generalizes beyond the ungated ladder.
+2. **Accomplish:**
+   - Set `HF_TOKEN` (`huggingface-cli login`) and accept each model's license on its HF page.
+   - Reuse the exact same configs with `base_model` switched to the gated id (the harness is model-agnostic; only LoRA `target_modules` may differ by family — Gemma uses the same `q/k/v/o_proj` names).
+   - Run `{full FT, LoRA, QLoRA} × {tasks} × {Gemma-2-2B(, Llama-3.2-1B)}`, append rows to `results/comparison.csv`/`.parquet`, and add the Gemma memory-vs-iteration plot.
+   - Gemma-2-2B full FT is the real VRAM stress test (8-bit Adam + gradient checkpointing + small batch); document the peak from its trace.
+3. **Definition of done:** gated rows present in the comparison table + dataset; Gemma full-FT peak documented and under 32 GB; plots rendered.
+4. **Required testing:** token/licence preflight check; same metric-bound and VRAM-ceiling asserts as Sprint 6.
+
+> **Status: ✅ complete.** Executed once an `HF_TOKEN` was provided — Gemma-2-2B-it
+> and Llama-3.2-1B-Instruct ran the full `{full FT, LoRA, QLoRA} × 5 tasks` matrix.
+> All 75 cells present in `results/comparison.*`; Gemma-2-2B full-FT peaks 25.9 GB
+> (< 32 GB) with 8-bit Adam + gradient checkpointing + batch 1 / grad-accum 8. See
+> `docs/phase-0-findings.md` (gated rungs section). Run via
+> `scripts/run_matrix.py --tier all` (or `--config configs/matrix/run-matrix.yaml`).
 
 ---
 
