@@ -48,5 +48,15 @@ not DeepSpeed offload. fp32 DeepSpeed offload is recorded as a real `fits=no`
 row. This also gives a clean ablation point: on the offload path, toggling the
 8-bit lever flips feasibility (fp32 → OOM, 8-bit → fits in 27 GB).
 
-*(Full fixed-protocol runs on real SNI data — 50 steps, with eval quality — and
-the remaining techniques follow; this table is updated as they land.)*
+## Fixed-protocol runs (real SNI data)
+
+Full protocol: Mistral-7B, `task843_financial_phrasebank_classification`, seq 512,
+batch 1 × grad-accum 8, 50 opt-steps, seed 42. `wallclock_per_epoch_s` is
+extrapolated from the 50-step rate.
+
+| Technique | Levers | Fits | Peak VRAM | Peak RAM | RAM Δ | s/epoch | final loss | Notes |
+|---|---|---|---|---|---|---|---|---|
+| baseline (paged 8-bit) | 8-bit Adam + grad-ckpt | ✅ | **27.64 GB** | 1.92 GB | 0.94 | 290.6 | 0.311 | working on-GPU full FT; loss decreasing |
+
+*(Remaining techniques — GaLore/Q-GaLore, LOMO/AdaLOMO, BAdam, MeZO, FSDP — land
+here as they're benchmarked; eval quality added in Sprint 7.)*

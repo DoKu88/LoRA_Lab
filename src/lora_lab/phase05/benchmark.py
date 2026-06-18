@@ -44,15 +44,14 @@ def _ensure_cuda_home(config: RunConfig) -> None:
 
 
 def _strategy_baseline(config: RunConfig) -> dict:
-    """Plain full-FT through the existing trainer (fits only on small models).
+    """On-GPU full-FT: bf16 weights + (paged 8-bit) AdamW + grad checkpointing.
 
-    This validates the Phase 0.5 instrumentation end-to-end without any
-    technique-specific machinery; on Mistral-7B it is expected to OOM, which is
-    itself the 'why we need the techniques' data point.
+    The Sprint 2 smoke test confirmed this fits Mistral-7B in ~27 GB VRAM at
+    ~1.7 s/step (with levers.use_8bit_adam=True + gradient_checkpointing=True).
     """
-    from ..train.trainer import train
+    from .strategies.manual import run_baseline
 
-    return train(config)
+    return run_baseline(config)
 
 
 def _not_implemented(sprint: str) -> Callable[[RunConfig], dict]:
