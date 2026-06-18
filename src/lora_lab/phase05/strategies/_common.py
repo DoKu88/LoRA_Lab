@@ -187,11 +187,13 @@ def run_manual_loop(
     wallclock = time.time() - t0
     ram_tracer.stop()
 
-    # full-parameter check (BAdam cycles blocks but all params are trainable)
-    assert pinfo["trainable_params"] == pinfo["total_params"], (
-        f"full-FT expects all params trainable, got "
-        f"{pinfo['trainable_params']}/{pinfo['total_params']}"
-    )
+    # full-parameter check — skipped for BAdam, which freezes all but the active
+    # block at any instant (full coverage is over the run, not simultaneously).
+    if full_param_check:
+        assert pinfo["trainable_params"] == pinfo["total_params"], (
+            f"full-FT expects all params trainable, got "
+            f"{pinfo['trainable_params']}/{pinfo['total_params']}"
+        )
 
     if len(tracer) == 0:
         tracer.record(max(step, 1))

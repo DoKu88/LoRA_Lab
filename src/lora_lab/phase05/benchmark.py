@@ -64,16 +64,36 @@ def _not_implemented(sprint: str) -> Callable[[RunConfig], dict]:
     return _stub
 
 
+def _galore(config: RunConfig) -> dict:
+    from .strategies.galore import run_galore
+    return run_galore(config)
+
+
+def _lomo(config: RunConfig) -> dict:
+    from .strategies.lomo import run_lomo
+    return run_lomo(config)
+
+
+def _badam(config: RunConfig) -> dict:
+    from .strategies.badam import run_badam
+    return run_badam(config)
+
+
+def _offload(config: RunConfig) -> dict:
+    from .strategies.offload import run_offload
+    return run_offload(config)
+
+
 # Registry: technique name -> strategy fn. Sprints 2-5 replace the stubs.
 STRATEGIES: dict[str, Callable[[RunConfig], dict]] = {
     "baseline": _strategy_baseline,
-    "zero_offload": _not_implemented("Sprint 2"),
+    "zero_offload": _offload,
     "fsdp_offload": _not_implemented("Sprint 3"),
-    "galore": _not_implemented("Sprint 4"),
-    "qgalore": _not_implemented("Sprint 4"),
-    "lomo": _not_implemented("Sprint 4"),
-    "adalomo": _not_implemented("Sprint 4"),
-    "badam": _not_implemented("Sprint 5"),
+    "galore": _galore,
+    "qgalore": _galore,
+    "lomo": _lomo,
+    "adalomo": _lomo,
+    "badam": _badam,
     "mezo": _not_implemented("Sprint 5"),
     "zero_infinity": _not_implemented("Sprint 5"),
 }
@@ -95,9 +115,13 @@ def benchmark(config: RunConfig) -> dict:
     print(f"[benchmark] technique={technique} model={config.base_model} "
           f"task={config.task}")
     summary = STRATEGIES[technique](config)
-    summary["technique"] = technique
-    summary["fits"] = bool(
-        summary.get("peak_vram_gb", 0) <= 32.0
-        and summary.get("peak_ram_gb", 0) <= 96.0
-    )
+    summary.setdefault("technique", technique)
+    # A strategy may set `fits` authoritatively (e.g. the offload preflight,
+    # which compares against *available* RAM, not the nominal 96 GB). Only
+    # derive it from the measured peaks when the strategy didn't decide.
+    if "fits" not in summary:
+        summary["fits"] = bool(
+            summary.get("peak_vram_gb", 0) <= 32.0
+            and summary.get("peak_ram_gb", 0) <= 96.0
+        )
     return summary
