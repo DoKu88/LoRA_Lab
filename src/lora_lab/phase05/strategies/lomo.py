@@ -21,15 +21,24 @@ def run_lomo(config: RunConfig) -> dict:
 
     model, tok = load_bf16_model(config)
     lr = config.hparams.lr
-    if config.technique.name == "adalomo":
-        optimizer = AdaLomo(model, lr=lr, clip_grad_norm=None,
-                            weight_decay=config.hparams.weight_decay)
+    clip = config.technique.lomo_clip_grad_norm
+    clip_arg = clip if clip and clip > 0 else None
+    Opt = AdaLomo if config.technique.name == "adalomo" else Lomo
+    optimizer = Opt(model, lr=lr, clip_grad_norm=clip_arg,
+                    weight_decay=config.hparams.weight_decay)
+
+    if clip_arg:
+        # LOMO's clipped path is two passes over the SAME graph: grad_norm()
+        # does backward(retain_graph=True) to compute the clip coefficient (and
+        # clears grads), then fused_backward() reuses the retained graph to apply
+        # the clipped update. ~2x backward cost, but no second forward.
+        def fused(loss):
+            optimizer.grad_norm(loss)
+            optimizer.fused_backward(loss, lr)
     else:
-        optimizer = Lomo(model, lr=lr, clip_grad_norm=None,
-                         weight_decay=config.hparams.weight_decay)
+        def fused(loss):
+            optimizer.fused_backward(loss, lr)
 
-    def fused(loss):
-        optimizer.fused_backward(loss, lr)
-
+    label = config.technique.name + ("_clip" if clip_arg else "")
     return run_manual_loop(config, model, tok, optimizer,
-                           label=config.technique.name, fused_backward=fused)
+                           label=label, fused_backward=fused)

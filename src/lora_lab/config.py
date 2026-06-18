@@ -86,6 +86,8 @@ class TechniqueParams:
     # --- BAdam ---
     badam_switch_every: int = 100  # optimizer steps per block before switching
     badam_switch_mode: str = "ascending"
+    # --- LOMO / AdaLOMO ---
+    lomo_clip_grad_norm: float = 0.0  # >0 enables LOMO's two-pass grad clipping
     # --- MeZO ---
     mezo_eps: float = 1e-3
     mezo_lr: float = 1e-6

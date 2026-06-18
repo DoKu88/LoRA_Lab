@@ -88,6 +88,24 @@ COMBO_MATRIX = [
 ]
 
 
+# Clipped LOMO/AdaLOMO (--clip): the no-clip runs failed two ways at the shared
+# LR (undertrained at 1e-5, diverged at 5e-4/1e-3). Gradient clipping should
+# tame the high-LR divergence, so sweep LR *with* clipping to find where the
+# fused optimizers actually learn. ~2x backward cost (two-pass clipping).
+CLIP_MATRIX = [
+    ("lomo_clip_lr1e4", {"technique.name": "lomo", "technique.lomo_clip_grad_norm": "1.0",
+                         "hparams.lr": "1e-4", "levers.gradient_checkpointing": "true"}),
+    ("lomo_clip_lr5e4", {"technique.name": "lomo", "technique.lomo_clip_grad_norm": "1.0",
+                         "hparams.lr": "5e-4", "levers.gradient_checkpointing": "true"}),
+    ("lomo_clip_lr1e3", {"technique.name": "lomo", "technique.lomo_clip_grad_norm": "1.0",
+                         "hparams.lr": "1e-3", "levers.gradient_checkpointing": "true"}),
+    ("adalomo_clip_lr5e4", {"technique.name": "adalomo", "technique.lomo_clip_grad_norm": "1.0",
+                            "hparams.lr": "5e-4", "levers.gradient_checkpointing": "true"}),
+    ("adalomo_clip_lr1e3", {"technique.name": "adalomo", "technique.lomo_clip_grad_norm": "1.0",
+                            "hparams.lr": "1e-3", "levers.gradient_checkpointing": "true"}),
+]
+
+
 def run_one(label: str, overrides: dict, steps: int, timeout_s: int,
             name_suffix: str = "") -> dict:
     sets = [f"{k}={v}" for k, v in overrides.items()]
@@ -164,6 +182,8 @@ def main() -> int:
     ap.add_argument("--ablation", action="store_true", help="also run the lever ablation")
     ap.add_argument("--combos", action="store_true",
                     help="run the method-combination matrix -> combinations.* (instead of techniques)")
+    ap.add_argument("--clip", action="store_true",
+                    help="run the clipped LOMO/AdaLOMO LR sweep -> clipped_lomo.*")
     ap.add_argument("--steps", type=int, default=None, help="override steps/run")
     ap.add_argument("--timeout-min", type=int, default=60, help="per-run timeout")
     ap.add_argument("--only", nargs="*", default=None, help="run only these labels")
@@ -176,7 +196,10 @@ def main() -> int:
     steps = args.steps if args.steps is not None else (3 if args.quick else 50)
     timeout_s = args.timeout_min * 60
 
-    if args.combos:
+    if args.clip:
+        plan = list(CLIP_MATRIX)
+        basename = "clipped_lomo"
+    elif args.combos:
         plan = list(COMBO_MATRIX)
         basename = "combinations"
     else:
