@@ -42,7 +42,7 @@ Because you only train a *small* hypernetwork while the base model stays frozen 
 - **Block-coordinate** → BAdam keeps only one transformer block's gradients + optimizer state live at a time, cycling through all blocks.
 - **Zeroth-order** → MeZO drops backprop entirely (forward-only), so training memory ≈ inference memory — slow but extreme.
 
-This class is what the **Phase 0.5** spike benchmarks (`notes.md` §C2): the practical reality on **32 GB VRAM + only 32 GB system RAM** is that CPU-offload paths (ZeRO-Offload/FSDP) are throttled by RAM, so the *VRAM-direct* techniques above — not offload — are the realistic route if 7B full FT is reachable at all. For Phase 0's apples-to-apples comparison we sidestep this by using a small common base where ordinary full FT fits; these techniques are how that ceiling might be lifted later.
+This class is what the **Phase 0.5** spike benchmarks (`notes.md` §C2). On **32 GB VRAM + 96 GB system RAM** there are now *two* realistic routes to 7B full FT: CPU-offload paths (ZeRO-Offload/FSDP), newly unblocked because 96 GB RAM comfortably holds the offloaded optimizer/gradient state (the simple "just works" path, but PCIe-bound); and the *VRAM-direct* techniques above, which keep the optimizer on-GPU and should be faster. The spike's job is to measure the speed gap, not to prove feasibility. For Phase 0's apples-to-apples comparison we still use a small common base where ordinary full FT fits *natively* (no offload tax); these techniques are how the 7B ceiling gets lifted later.
 
 ## Theme 4 — VLAs as a second, harder testbed
 

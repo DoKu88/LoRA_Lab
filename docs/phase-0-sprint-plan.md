@@ -19,8 +19,8 @@ Two goals, delivered together:
 
 ## Hard constraints (these drive every design choice)
 
-- **Single GPU: 32 GB VRAM. System RAM: 32 GB.**
-- **Full fine-tuning a 7B model does not fit.** bf16 + standard Adam on a 7B ≈ 14 GB weights + 14 GB grads + ~56 GB optimizer states ≈ **84 GB**, and CPU offload is largely blocked by only 32 GB system RAM. So the three-way comparison must run on a **common small base** chosen so *full FT fits natively*.
+- **Single GPU: 32 GB VRAM. System RAM: 96 GB.**
+- **Full fine-tuning a 7B model does not fit on-GPU.** bf16 + standard Adam on a 7B ≈ 14 GB weights + 14 GB grads + ~56 GB optimizer states ≈ **84 GB**, over the 32 GB VRAM budget. (With 96 GB RAM, CPU offload *can* now spill the optimizer/grad state off-GPU — that's the Phase 0.5 spike — but offload adds a PCIe-bandwidth tax.) So the three-way comparison still runs on a **common small base** chosen so *full FT fits natively in VRAM*, keeping it apples-to-apples and offload-tax-free.
 - **Full FT of even a 2–3B model is near the ceiling** — Gemma-2-2B full FT needs 8-bit Adam + gradient checkpointing + small batch to stay under 32 GB.
 - **Single GPU ⇒ training runs serialize.** "Parallel sprints" below means parallel *development*; actual training jobs queue on the one GPU.
 

@@ -94,7 +94,7 @@ Production design of FSDP: shards parameters, gradients, and optimizer states, a
 
 ### Full-parameter fine-tuning under tight memory (Phase 0.5 candidates — no local PDFs yet)
 
-*Added for the **Phase 0.5** spike ("can we full-finetune Mistral-7B on 32 GB VRAM + 32 GB RAM?", see `notes.md` §C2). These make **full-parameter** training fit on a small GPU by attacking the gradient/optimizer-state pools rather than freezing the base. PDFs are not yet in `pdfs/` — links are to arXiv; treat as a reading queue.*
+*Added for the **Phase 0.5** spike ("can we full-finetune Mistral-7B on 32 GB VRAM + 96 GB RAM?", see `notes.md` §C2). These make **full-parameter** training fit on a small GPU by attacking the gradient/optimizer-state pools rather than freezing the base — the *VRAM-direct* alternative to simply offloading state to the (now ample) 96 GB CPU pool. PDFs are not yet in `pdfs/` — links are to arXiv; treat as a reading queue.*
 
 ### 2.11 Q-GaLore: Quantized GaLore with INT4 Projection and Layer-Adaptive Low-Rank Gradients
 *Zhang, Liu, Hu, Lee, Wang, et al., 2024 — [arXiv:2407.08296](https://arxiv.org/abs/2407.08296)*
@@ -114,7 +114,7 @@ A **memory-efficient zeroth-order optimizer**: estimates gradients from *forward
 
 ### 2.6′ ZeRO-Infinity (NVMe offload, extends §2.6)
 *Rajbhandari, Ruwase, Yang, He, 2021 — SC '21 — [arXiv:2104.07857](https://arxiv.org/abs/2104.07857)*
-The successor to ZeRO-Offload (§2.6) that adds **NVMe (SSD) offload** of parameters, gradients, and optimizer states, plus bandwidth-centric partitioning — enabling models far larger than GPU+CPU memory by streaming state off disk. Listed here because it's the **only offload path that survives this machine's 32 GB RAM ceiling** for 7B full FT; the trade-off is heavy dependence on a fast SSD and large throughput penalties. A Phase 0.5 fallback to measure, not a default.
+The successor to ZeRO-Offload (§2.6) that adds **NVMe (SSD) offload** of parameters, gradients, and optimizer states, plus bandwidth-centric partitioning — enabling models far larger than GPU+CPU memory by streaming state off disk. Was the *only* offload path back when this machine had 32 GB RAM; **with 96 GB RAM it's no longer needed** — plain ZeRO-Offload/FSDP CPU-offload (§2.6/§2.10) now holds the 7B full-FT optimizer/gradient state in RAM. Keep ZeRO-Infinity only as a Phase 0.5 fallback if RAM unexpectedly pinches; otherwise its SSD-bound slowdown isn't worth paying.
 
 ---
 
@@ -231,7 +231,7 @@ Generalizes E4T into a **single domain-agnostic encoder** that personalizes acro
 ## Coverage notes
 - **42 sources with PDFs/links** (39 downloaded PDFs + 3 web-only Anthropic articles §4.2/§4.3/§4.5), **plus 6 reading-queue additions** for the Phase 0.5 full-FT spike (§2.11 Q-GaLore, §2.12 LOMO/AdaLOMO, §2.13 BAdam, §2.14 MeZO, §2.6′ ZeRO-Infinity) — these have no local PDFs yet; download before citing.
 - The user's named techniques are all covered: quantization (§2.2, §2.8), gradient checkpointing (§2.7), and layer-wise/offloaded backprop (§2.6 ZeRO-Offload, §2.6′ ZeRO-Infinity, §2.10 FSDP).
-- **Full-parameter-on-a-budget cluster (§2.9, §2.11–§2.14):** GaLore, Q-GaLore, LOMO/AdaLOMO, BAdam, MeZO — the candidate techniques for getting Mistral-7B to full-finetune on 32 GB (see `notes.md` §C2 Phase 0.5).
+- **Full-parameter-on-a-budget cluster (§2.9, §2.11–§2.14):** GaLore, Q-GaLore, LOMO/AdaLOMO, BAdam, MeZO — the *VRAM-direct* candidates for full-finetuning Mistral-7B within 32 GB VRAM (see `notes.md` §C2 Phase 0.5). With 96 GB system RAM, plain CPU offload (§2.6/§2.10) is also now viable as the simpler "just works" alternative; this cluster is the *faster*, on-GPU route.
 - Provenance flags: §4.10 is a single-author 2026 preprint; §1.6 and §1.2 are very recent. Weight their claims accordingly.
 
 ## Parked scope (LLM-first)
