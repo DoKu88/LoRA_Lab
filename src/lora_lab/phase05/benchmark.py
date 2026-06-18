@@ -1,0 +1,104 @@
+"""Phase 0.5 benchmark entrypoint — one fixed protocol, many techniques.
+
+``benchmark(config)`` runs the fixed measurement protocol with the strategy
+selected by ``config.technique.name`` and returns the trade-off-table row
+(peak VRAM, peak RAM, wall-clock/step, tokens/s, fits, ...). Every strategy
+goes through the same instrumentation (GPU + host-RAM tracers, W&B) so the rows
+stay apples-to-apples.
+
+Each technique is a *strategy* registered in ``STRATEGIES``. Sprints 2-5 fill
+these in one at a time; until then a technique raises a clear NotImplementedError
+naming its sprint, so the entrypoint and dispatch are testable now and the
+overnight runner fails a single technique gracefully (logged, skipped) rather
+than crashing the batch.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+from typing import Callable
+
+from ..config import RunConfig
+
+# Techniques that run the optimizer step on CPU via DeepSpeed and therefore need
+# CUDA_HOME pointed at a real toolkit so the CPUAdam op JIT-compiles (see
+# docs/phase-0.5-toolchain note / memory). VRAM-direct + FSDP don't need it.
+_NEEDS_CUDA_HOME = {"zero_offload", "zero_infinity"}
+_DEFAULT_CUDA_HOME = os.path.dirname(os.path.dirname(sys.executable))  # env prefix
+
+
+def _ensure_cuda_home(config: RunConfig) -> None:
+    if config.technique.name in _NEEDS_CUDA_HOME and not os.environ.get("CUDA_HOME"):
+        candidate = _DEFAULT_CUDA_HOME
+        if os.path.exists(os.path.join(candidate, "bin", "nvcc")):
+            os.environ["CUDA_HOME"] = candidate
+            print(f"[benchmark] CUDA_HOME auto-set to {candidate} for "
+                  f"{config.technique.name}")
+        else:
+            print(f"[benchmark] WARNING: {config.technique.name} needs CUDA_HOME "
+                  f"but no nvcc found at {candidate}; offload op may fail to build")
+
+
+# --- strategies -------------------------------------------------------------
+
+
+def _strategy_baseline(config: RunConfig) -> dict:
+    """Plain full-FT through the existing trainer (fits only on small models).
+
+    This validates the Phase 0.5 instrumentation end-to-end without any
+    technique-specific machinery; on Mistral-7B it is expected to OOM, which is
+    itself the 'why we need the techniques' data point.
+    """
+    from ..train.trainer import train
+
+    return train(config)
+
+
+def _not_implemented(sprint: str) -> Callable[[RunConfig], dict]:
+    def _stub(config: RunConfig) -> dict:
+        raise NotImplementedError(
+            f"technique '{config.technique.name}' is implemented in {sprint} "
+            f"(see docs/phase-0.5-sprint-plan.md)"
+        )
+
+    return _stub
+
+
+# Registry: technique name -> strategy fn. Sprints 2-5 replace the stubs.
+STRATEGIES: dict[str, Callable[[RunConfig], dict]] = {
+    "baseline": _strategy_baseline,
+    "zero_offload": _not_implemented("Sprint 2"),
+    "fsdp_offload": _not_implemented("Sprint 3"),
+    "galore": _not_implemented("Sprint 4"),
+    "qgalore": _not_implemented("Sprint 4"),
+    "lomo": _not_implemented("Sprint 4"),
+    "adalomo": _not_implemented("Sprint 4"),
+    "badam": _not_implemented("Sprint 5"),
+    "mezo": _not_implemented("Sprint 5"),
+    "zero_infinity": _not_implemented("Sprint 5"),
+}
+
+
+def benchmark(config: RunConfig) -> dict:
+    """Run one technique under the fixed protocol; return its trade-off row.
+
+    The returned summary is the trainer/strategy summary annotated with the
+    technique name and a ``fits`` flag (peak VRAM <= 32 GB and peak RAM <= 96 GB).
+    Strategy exceptions propagate to the caller, which decides whether to record
+    ``fits=no`` and continue (the overnight runner does exactly that).
+    """
+    technique = config.technique.name
+    if technique not in STRATEGIES:
+        raise ValueError(f"unknown technique {technique!r}; "
+                         f"known: {sorted(STRATEGIES)}")
+    _ensure_cuda_home(config)
+    print(f"[benchmark] technique={technique} model={config.base_model} "
+          f"task={config.task}")
+    summary = STRATEGIES[technique](config)
+    summary["technique"] = technique
+    summary["fits"] = bool(
+        summary.get("peak_vram_gb", 0) <= 32.0
+        and summary.get("peak_ram_gb", 0) <= 96.0
+    )
+    return summary
