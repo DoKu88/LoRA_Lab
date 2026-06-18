@@ -81,12 +81,14 @@ COMBO_MATRIX = [
 ]
 
 
-def run_one(label: str, overrides: dict, steps: int, timeout_s: int) -> dict:
+def run_one(label: str, overrides: dict, steps: int, timeout_s: int,
+            name_suffix: str = "") -> dict:
     sets = [f"{k}={v}" for k, v in overrides.items()]
-    # Distinct run_name per label so output dirs + mem-traces don't overwrite
-    # each other (every technique otherwise derives the same method-model-task
-    # name) — the per-technique plot overlays depend on distinct trace files.
-    sets += [f"run_name=p05_{label}", f"hparams.max_steps={steps}"]
+    # Distinct run_name per label (+ task suffix) so output dirs + mem-traces
+    # don't overwrite each other (every technique otherwise derives the same
+    # method-model-task name) — the per-technique plot overlays need distinct
+    # trace files, and a second task must not clobber the first task's traces.
+    sets += [f"run_name=p05_{label}{name_suffix}", f"hparams.max_steps={steps}"]
     cmd = [sys.executable, "scripts/benchmark.py", "--protocol", PROTOCOL,
            "--wandb-mode", "offline", "--set", *sets]
     # expandable_segments reduces allocator fragmentation — GaLore's SVD spike
@@ -158,6 +160,10 @@ def main() -> int:
     ap.add_argument("--steps", type=int, default=None, help="override steps/run")
     ap.add_argument("--timeout-min", type=int, default=60, help="per-run timeout")
     ap.add_argument("--only", nargs="*", default=None, help="run only these labels")
+    ap.add_argument("--task", default=None,
+                    help="override task for all runs; writes <basename>_<tasktag>.*")
+    ap.add_argument("--eval-samples", type=int, default=None,
+                    help="override eval.max_eval_samples (held-out set size)")
     args = ap.parse_args()
 
     steps = args.steps if args.steps is not None else (3 if args.quick else 50)
@@ -177,11 +183,22 @@ def main() -> int:
     if args.only:
         plan = [(l, o) for (l, o) in plan if l in args.only]
 
+    # Second-task support: inject the task override + a name suffix so a second
+    # task writes its own table and its own traces (no clobbering task 1).
+    name_suffix = ""
+    if args.task:
+        tag = args.task.split("_")[0]  # e.g. 'task1344'
+        name_suffix = f"_{tag}"
+        basename = f"{basename}_{tag}"
+        plan = [(l, {**o, "task": args.task}) for (l, o) in plan]
+    if args.eval_samples is not None:
+        plan = [(l, {**o, "eval.max_eval_samples": str(args.eval_samples)}) for (l, o) in plan]
+
     print(f"== Phase 0.5 matrix ({basename}): {len(plan)} runs, {steps} steps each, "
           f"timeout {args.timeout_min}min/run")
     rows = []
     for label, overrides in plan:
-        row = run_one(label, overrides, steps, timeout_s)
+        row = run_one(label, overrides, steps, timeout_s, name_suffix=name_suffix)
         rows.append(row)
         print(f"   -> {label}: fits={row.get('fits')} "
               f"vram={row.get('peak_vram_gb')} ram={row.get('peak_ram_gb')} "
