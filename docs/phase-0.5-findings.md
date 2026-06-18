@@ -33,14 +33,34 @@ random-token batches (feasibility only — loss values not meaningful).
 | DeepSpeed ZeRO-2 + CPU offload | `DeepSpeedCPUAdam` (fp32) | ❌ **no** | — | OOM-killed @ init | — | fp32 state ~84 GB > ~87 GB avail |
 
 ### Why fp32 ZeRO-Offload fails here (the memory math)
-DeepSpeed CPU offload mandates the fp32 `DeepSpeedCPUAdam`; for 7.24 B params the
-CPU must hold fp32 **master (29 GB) + momentum (29 GB) + variance (29 GB) ≈ 87 GB**
-of optimizer state, plus pinned buffers and the model — over the ~87 GB of
-available RAM. Process is SIGKILLed (exit 137) during `deepspeed.initialize()`.
-DeepSpeed has **no 8-bit CPU optimizer**, so the "ZeRO-Offload + 8-bit Adam" idea
-can't be realized through DeepSpeed; the 8-bit win comes from bitsandbytes paged
-AdamW instead (states in 8 bits, paged to CPU on demand — but at 7B they mostly
-stay GPU-resident, hence the tiny 4.5 GB RAM use and no offload tax).
+**fp32 is the killer, and DeepSpeed gives no way around it.** DeepSpeed CPU
+offload runs the Adam step on CPU via its `DeepSpeedCPUAdam` kernel, which is
+**fp32-only** (DeepSpeed has no 8-bit CPU optimizer). For 7.24 B params the CPU
+must then hold three fp32 copies:
+
+| fp32 state on CPU (ZeRO-Offload) | size |
+|---|---|
+| master weights | 29 GB |
+| Adam momentum (m) | 29 GB |
+| Adam variance (v) | 29 GB |
+| **optimizer state total** | **~87 GB** |
+| + bf16 model copy during init | ~14 GB |
+| + pinned transfer buffers | several GB |
+
+The box has 96 GB but only **~87 GB available** — so the fp32 triple-copy alone
+fills RAM, and the process is SIGKILLed (exit 137) during
+`deepspeed.initialize()`, before it even takes a step. The 96 GB upgrade that
+`notes.md` assumed would unblock offload is *just barely* not enough.
+
+**The irony:** the one thing that would rescue offload — 8-bit optimizer state
+(~28 GB instead of 87 GB) — is exactly what DeepSpeed's CPU path lacks. And the
+moment you *have* 8-bit Adam (bitsandbytes paged AdamW), the state shrinks so
+much that you **don't need to offload at all** — it fits on the 32 GB GPU
+(27 GB), with states mostly GPU-resident (hence the tiny 4.5 GB RAM and no
+offload tax). So offloading wasn't conceptually wrong; it lost a footrace to the
+on-GPU 8-bit path that the same idea (quantize the optimizer) enables. Routes
+that *could* make offload work — an 8-bit CPU optimizer, or NVMe spill
+(ZeRO-Infinity, much slower) — were unnecessary once the on-GPU methods won.
 
 ### Implication for the technique taxonomy
 The "offload anchor" that actually *works* on this box is **8-bit paged AdamW**,

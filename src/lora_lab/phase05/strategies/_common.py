@@ -214,6 +214,23 @@ def run_manual_loop(
         model.save_pretrained(str(ckpt_dir))
         tok.save_pretrained(str(ckpt_dir))
 
+    # ---- held-out eval quality (inline, before discarding the model) --
+    eval_score = None
+    eval_metric = config.eval.metric
+    if config.eval.max_eval_samples > 0 and len(bundle.test_eval) > 0:
+        from ...eval.evaluate import evaluate_inline
+
+        try:
+            scored = evaluate_inline(
+                model, tok, bundle, eval_metric,
+                max_new_tokens=config.eval.gen_max_new_tokens,
+                batch_size=config.eval.batch_size,
+            )
+            eval_score = round(scored["score"], 5)
+            print(f"[{label}] eval {eval_metric}={eval_score} on {scored['n']} held-out")
+        except Exception as e:  # noqa: BLE001 - eval must never sink a measured run
+            print(f"[{label}] eval failed ({type(e).__name__}: {e}); continuing")
+
     logger.set_summary(
         method=config.method, base_model=config.base_model, task=config.task,
         peak_vram_gb=round(tracer.peak_gb, 4),
@@ -222,6 +239,8 @@ def run_manual_loop(
         peak_ram_delta_gb=round(ram_tracer.peak_ram_delta_gb, 4),
         baseline_ram_gb=round(ram_tracer.baseline_ram_gb, 4),
         final_train_loss=round(final_loss, 5),
+        eval_metric=eval_metric,
+        eval_score=eval_score,
         wallclock_s=round(wallclock, 2),
         wallclock_per_step_s=round(wallclock / max(1, step), 4),
         wallclock_per_epoch_s=round(wallclock * steps_per_epoch / max(1, step), 2),
