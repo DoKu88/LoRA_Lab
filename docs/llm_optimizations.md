@@ -1,6 +1,6 @@
 # Phase 0.5 — Full-FT Memory Optimizations: VRAM / RAM / Time Trade-offs
 
-*Reference table for the Phase 0.5 feasibility spike — "can we full-finetune Mistral-7B on this box?" Pairs with [`../notes.md`](../notes.md) §C2 (Phase 0.5) and §B (practical tips). Section refs (§2.x) point at the lit-review entries in `../summaries.md`.*
+*Reference table for the Phase 0.5 feasibility spike — "can we full-finetune Mistral-7B on this box?" The **execution plan that fills in this table** is [`./phase-0.5-sprint-plan.md`](./phase-0.5-sprint-plan.md). Pairs with [`../notes.md`](../notes.md) §C2 (Phase 0.5) and §B (practical tips). Section refs (§2.x) point at the lit-review entries in `../summaries.md`.*
 
 ---
 
@@ -44,6 +44,8 @@ The job below is to either keep state on-GPU (route 2) **or** spill it cleanly t
 ---
 
 ## Results to fill in (per technique)
+
+> Populated by **Sprint 6** of [`./phase-0.5-sprint-plan.md`](./phase-0.5-sprint-plan.md); the raw rows + plots land in `results/phase05/`.
 
 Measure with `torch.cuda.max_memory_allocated()` per phase (§B), on Mistral-7B-Instruct-v0.2, fixed batch/seq-len/seed.
 
