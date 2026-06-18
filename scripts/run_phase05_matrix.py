@@ -66,7 +66,10 @@ def run_one(label: str, overrides: dict, steps: int, timeout_s: int) -> dict:
     sets += [f"run_name=p05_{label}", f"hparams.max_steps={steps}"]
     cmd = [sys.executable, "scripts/benchmark.py", "--protocol", PROTOCOL,
            "--wandb-mode", "offline", "--set", *sets]
-    env = dict(os.environ, CUDA_HOME=ENV_PREFIX)
+    # expandable_segments reduces allocator fragmentation — GaLore's SVD spike
+    # OOMed at "30 MiB free" without it despite fitting overall.
+    env = dict(os.environ, CUDA_HOME=ENV_PREFIX,
+               PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True")
     print(f"\n===== {label} =====  ({' '.join(sets)})")
     t0 = time.time()
     try:

@@ -47,16 +47,21 @@ The job below is to either keep state on-GPU (route 2) **or** spill it cleanly t
 
 > Populated by **Sprint 6** of [`./phase-0.5-sprint-plan.md`](./phase-0.5-sprint-plan.md); the raw rows + plots land in `results/phase05/`.
 
-Measure with `torch.cuda.max_memory_allocated()` per phase (§B), on Mistral-7B-Instruct-v0.2, fixed batch/seq-len/seed.
+Measured on Mistral-7B-Instruct-v0.2, seq 512, batch 1 × grad-accum 8, 50 steps,
+seed 42, grad-checkpointing on, `expandable_segments:True`. Full writeup:
+[`./phase-0.5-findings.md`](./phase-0.5-findings.md). Speed is **s/micro-batch**
+(the apples-to-apples metric — LOMO/AdaLOMO update per micro-batch, others
+accumulate 8). Quality (held-out eval) is the remaining Sprint 7 item.
 
-| Technique | Config / flags | Fits (≤32 GB VRAM / ≤96 GB RAM)? | Measured peak VRAM | Peak system RAM | Wall-clock / step | Quality (eval) | Notes |
+| Technique | Config / flags | Fits (≤32 GB VRAM / ≤96 GB RAM)? | Measured peak VRAM | Peak system RAM | Wall-clock / micro-batch | Quality (eval) | Notes |
 |---|---|---|---|---|---|---|---|
-| ZeRO-Offload + 8-bit Adam | | | | | | | baseline "just works" route |
-| FSDP CPU-offload | | | | | | | |
-| GaLore | | | | | | | |
-| Q-GaLore | | | | | | | |
-| LOMO | | | | | | | |
-| AdaLOMO | | | | | | | |
-| BAdam | | | | | | | |
-| MeZO | | | | | | | |
-| ZeRO-Infinity (NVMe) | | | | | | | fallback only |
+| **paged 8-bit AdamW** (the working "8-bit Adam" baseline) | bf16 + PagedAdamW8bit + grad-ckpt | ✅ / ✅ | 27.64 GB | 1.9 GB | 0.28 s | TODO | simplest robust route; 8-bit Adam is load-bearing (ablation) |
+| ZeRO-Offload + fp32 Adam | DeepSpeed ZeRO-2, CPU optimizer offload | ❌ (RAM) / ❌ | — | ~95 GB (OOM) | — | — | fp32 CPUAdam ~81 GB > avail RAM; DeepSpeed has **no 8-bit CPU optimizer** |
+| FSDP CPU-offload | — | not run | | | | | fp32 offload would OOM RAM like DeepSpeed |
+| GaLore | rank 128, gap 200 | ✅ / ✅ | 30.41 GB | 1.9 GB | 0.75 s | TODO | tightest VRAM **and** slowest (SVD + projection) — worst corner |
+| Q-GaLore | GaLoreAdamW8bit, rank 128 | ✅ / ✅ | 28.59 GB | 1.9 GB | 0.75 s | TODO | 8-bit GaLore; same projection overhead |
+| LOMO | fused backward, no clip | ✅ / ✅ | **14.60 GB** | 1.7 GB | 0.29 s | TODO | **memory champion** (~17 GB free); speed = baseline |
+| AdaLOMO | fused, adaptive | ✅ / ✅ | 15.10 GB | 1.8 GB | 0.60 s | TODO | wants its own LR (loss high at shared 1e-5) |
+| BAdam | BlockOptimizer, switch 5 | ✅ / ✅ | 17.60 GB | 1.9 GB | **0.13 s** | TODO | fastest/token (one block live); ~10/32 blocks in 50 steps |
+| MeZO | — | not run | | | | | needs custom zeroth-order loop (Sprint 5) |
+| ZeRO-Infinity (NVMe) | — | not run | | | | | fallback only — RAM didn't pinch the on-GPU routes |

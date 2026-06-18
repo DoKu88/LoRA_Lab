@@ -20,27 +20,40 @@ Chart: `results/phase05/plots/lever_contribution.png`.
 
 ## Ablation table
 
-*(populated by `scripts/run_phase05_matrix.py --ablation` then this writeup;
-numbers below are filled in Sprint 7.)*
+Anchor = paged 8-bit AdamW + gradient checkpointing (27.64 GB). Each cell
+flips exactly one lever. Source: `results/phase05/feasibility_table.csv`
+(`abl_*` rows); chart: `results/phase05/plots/lever_contribution.png`.
 
-| Cell | Lever changed vs anchor | Fits | Peak VRAM | Δ VRAM vs anchor | Peak RAM | s/step | Interpretation |
-|---|---|---|---|---|---|---|---|
-| `abl_anchor` | — (full stack) | | | 0 (ref) | | | reference |
-| `abl_no_8bit` | 8-bit Adam → fp32 | | | | | | cost of dropping 8-bit Adam |
-| `abl_no_gradckpt` | gradient checkpointing off | | | | | | cost of dropping grad checkpointing |
+| Cell | Lever changed vs anchor | Fits | Peak VRAM | Δ VRAM | s/micro-batch | Interpretation |
+|---|---|---|---|---|---|---|
+| `abl_anchor` | — (full stack) | ✅ | 27.64 GB | 0 (ref) | 0.282 | reference |
+| `abl_no_8bit` | 8-bit Adam → fp32 AdamW | ❌ **OOM** | — | **load-bearing** | — | without 8-bit Adam the run **does not fit** |
+| `abl_no_gradckpt` | gradient checkpointing off | ✅ | 29.92 GB | **+2.28 GB** | 0.246 | costs 2.28 GB VRAM; saves ~13% step time |
 
 ---
 
-## What each lever buys (to be written from the numbers)
+## What each lever buys (measured)
 
-- **8-bit Adam (vs fp32 AdamW).** Optimizer state 4 bytes → 1 byte/param. Expected
-  to be load-bearing on the GPU path: fp32 Adam state (~56 GB) + bf16 grads can't
-  coexist with the model in 32 GB, so `abl_no_8bit` is expected `fits=no`.
-- **Gradient checkpointing.** Trades recompute for activation memory; expected a
-  large VRAM cut at a modest step-time cost.
+- **8-bit Adam — LOAD-BEARING.** Removing it (fp32 AdamW) **OOMs** during the
+  first optimizer step (allocating `exp_avg_sq`): fp32 Adam state (~56 GB for m+v)
+  plus bf16 weights+grads cannot coexist in 32 GB. This is the single most
+  important lever — it's the difference between feasible and infeasible for the
+  8-bit-Adam route. (The VRAM-direct optimizers — LOMO/GaLore/BAdam — achieve the
+  same end differently, so they don't depend on this lever.)
+- **Gradient checkpointing — a real but modest VRAM lever with a speed cost.**
+  Turning it off *raises* peak VRAM by **2.28 GB** (29.92 vs 27.64) and *lowers*
+  step time by ~13% (0.246 vs 0.282 s/micro-batch) — the classic recompute-for-
+  memory trade. With it on we stay comfortably under 32 GB; off, we're at 29.9 GB
+  with little margin.
 
 ## Headroom recommendation for the hypernetwork
 
-*(Sprint 7: from the anchor's free-VRAM headroom (32 − peak) and the lever
-deltas, state which lever stack leaves the most room for the Phase 2
-hypernetwork while keeping step time acceptable.)*
+The anchor (paged 8-bit) leaves only **~4.4 GB** free — too tight to stack a
+hypernetwork. The ablation says you can't recover much from the levers on this
+route (8-bit is mandatory; dropping grad-checkpointing *costs* VRAM). So **the
+headroom must come from the choice of *technique*, not lever-tuning**: **LOMO
+(14.6 GB → ~17 GB free)** or **BAdam (17.6 GB → ~14 GB free)** are the routes
+that leave room for the Phase 2 hypernetwork, while keeping gradient
+checkpointing on (cheap insurance) and — for LOMO/BAdam — not needing 8-bit Adam
+at all. Net: **train the 7B with LOMO + gradient checkpointing; spend the freed
+~17 GB on the hypernetwork.**

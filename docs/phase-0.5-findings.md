@@ -48,15 +48,58 @@ not DeepSpeed offload. fp32 DeepSpeed offload is recorded as a real `fits=no`
 row. This also gives a clean ablation point: on the offload path, toggling the
 8-bit lever flips feasibility (fp32 → OOM, 8-bit → fits in 27 GB).
 
-## Fixed-protocol runs (real SNI data)
+## Fixed-protocol trade-off table (real SNI data)
 
-Full protocol: Mistral-7B, `task843_financial_phrasebank_classification`, seq 512,
-batch 1 × grad-accum 8, 50 opt-steps, seed 42. `wallclock_per_epoch_s` is
-extrapolated from the 50-step rate.
+Protocol: Mistral-7B, `task843_financial_phrasebank_classification`, seq 512,
+batch 1 × grad-accum 8, **50 opt-steps**, seed 42, grad-checkpointing on. All
+on-GPU techniques run with `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`.
+Source: `results/phase05/feasibility_table.csv`; plots in
+`results/phase05/plots/`.
 
-| Technique | Levers | Fits | Peak VRAM | Peak RAM | RAM Δ | s/epoch | final loss | Notes |
-|---|---|---|---|---|---|---|---|---|
-| baseline (paged 8-bit) | 8-bit Adam + grad-ckpt | ✅ | **27.64 GB** | 1.92 GB | 0.94 | 290.6 | 0.311 | working on-GPU full FT; loss decreasing |
+| Technique | Fits | Peak VRAM | Peak RAM | s/opt-step | **s/micro-batch** | Headroom (32−VRAM) | final loss |
+|---|---|---|---|---|---|---|---|
+| **LOMO** | ✅ | **14.60 GB** | 1.7 | 0.29¹ | **0.29** | **17.4 GB** | 0.61 |
+| AdaLOMO | ✅ | 15.10 GB | 1.8 | 0.60¹ | 0.60 | 16.9 GB | 1.93² |
+| BAdam | ✅ | 17.60 GB | 1.9 | 1.03 | **0.13** | 14.4 GB | 0.57 |
+| Q-GaLore | ✅ | 28.59 GB | 1.9 | 6.03 | 0.75 | 3.4 GB | 0.35 |
+| baseline (paged 8-bit) | ✅ | 27.64 GB | 1.9 | 2.26 | 0.28 | 4.4 GB | 0.44 |
+| GaLore | ✅ | 30.41 GB | 1.9 | 6.03 | 0.75 | 1.6 GB | 0.44 |
+| fp32 ZeRO-Offload | ❌ | — | ~95 GB | — | — | — | — |
 
-*(Remaining techniques — GaLore/Q-GaLore, LOMO/AdaLOMO, BAdam, MeZO, FSDP — land
-here as they're benchmarked; eval quality added in Sprint 7.)*
+¹ LOMO/AdaLOMO fuse the update into backward (no grad accumulation), so one
+"opt-step" = **1** micro-batch; the others accumulate **8**. The **s/micro-batch**
+column is the apples-to-apples speed metric. ² AdaLOMO's high loss is an LR
+mismatch at the shared 1e-5 (its adaptive scaling wants a different LR), not an
+instability — flagged for a per-technique LR if it's used for real.
+
+### What the numbers say
+- **Feasibility: every VRAM-direct technique fits; the offload route does not.**
+  The plan expected offload to be the easy path; on this box it's the *only*
+  family that fails (fp32 CPU-Adam state > RAM).
+- **Memory:** LOMO/AdaLOMO are far the lightest (~15 GB — half the GPU free),
+  then BAdam (17.6), then the 8-bit/GaLore family (~28–30 GB, near the ceiling).
+- **Speed (per micro-batch, the fair metric):** BAdam fastest (0.13 s — only one
+  block's optimizer is live), baseline and **LOMO tie at ~0.28 s** (LOMO's win is
+  *memory*, not speed), AdaLOMO ~2×, **GaLore/Q-GaLore ~2.7× slower** (the
+  per-step low-rank projection + periodic SVD is real overhead).
+
+## Recommendation (fastest viable route + hypernetwork headroom)
+- **For Phase 2 (hypernetwork on top of the 7B): LOMO.** ~14.6 GB leaves **~17 GB
+  of VRAM headroom** for the hypernetwork + its activations, at baseline-level
+  per-token speed. BAdam (17.6 GB, fastest/token) is the runner-up.
+- **Simplest robust choice if headroom isn't the constraint: paged 8-bit AdamW**
+  (the baseline) — standard Adam dynamics, 27.6 GB, no projection/cycling quirks.
+- **Avoid:** GaLore/Q-GaLore here — they're both the tightest on VRAM *and* the
+  slowest, the worst corner of the trade-off; and fp32 DeepSpeed offload (OOM).
+
+## Caveats
+- 50-step benchmark measures **memory + speed**, not convergence. `final_train_loss`
+  is a learning signal, not a quality verdict. **Full held-out eval quality is the
+  one remaining Sprint 7 item** (the runs use `save_checkpoint=False` to protect
+  disk — eval needs an inline-eval pass or a targeted re-run of the chosen route).
+- On-GPU 7B full FT trains **bf16 weights without an fp32 master copy** (a 29 GB
+  master doesn't fit) — a known precision caveat for all rows.
+- **BAdam** covers ~10 blocks in 50 steps (switch_every=5); full coverage of all
+  32 blocks needs a longer run. Memory/speed profile is representative.
+- **MeZO** and **FSDP CPU-offload** are not yet run (MeZO needs a custom
+  zeroth-order loop; FSDP fp32 offload would OOM RAM like DeepSpeed).
