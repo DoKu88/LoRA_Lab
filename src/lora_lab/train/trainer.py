@@ -20,7 +20,12 @@ import torch
 from ..config import RunConfig
 from ..data.sni import DataCollatorForSupervised, get_dataset
 from ..methods.build import build_model_and_tokenizer, build_optimizer
-from ..utils.vram import MemoryTracer, cuda_mem_snapshot, reset_peak_memory
+from ..utils.vram import (
+    HostRamTracer,
+    MemoryTracer,
+    cuda_mem_snapshot,
+    reset_peak_memory,
+)
 from .params import count_parameters
 from .run_logger import RunLogger
 
@@ -52,6 +57,10 @@ def train(config: RunConfig) -> dict:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     logger = RunLogger(config)
     tracer = MemoryTracer()
+    # Host-RAM probe: baseline captured now (before model load) so peak-delta is
+    # the run's own footprint; the background thread catches CPU-side spikes
+    # (offloaded optimizer step) that land between logged training steps.
+    ram_tracer = HostRamTracer().start()
     reset_peak_memory()
 
     # ---- data ----------------------------------------------------------
@@ -129,6 +138,7 @@ def train(config: RunConfig) -> dict:
 
                 if step % mem_every == 0:
                     tracer.record(step)
+                    ram_tracer.record(step)
 
                 if step % log_every == 0 or step == total_steps:
                     dt = time.time() - interval_t
@@ -142,6 +152,7 @@ def train(config: RunConfig) -> dict:
                             "train_loss": round(avg_loss, 5),
                             "gpu_mem_gb": round(snap["allocated_gb"], 4),
                             "gpu_mem_reserved_gb": round(snap["reserved_gb"], 4),
+                            "ram_gb": round(ram_tracer.ram_gb[-1], 4) if len(ram_tracer) else 0.0,
                             "tokens_per_sec": round(interval_tokens / dt, 1) if dt > 0 else 0.0,
                             "step_time_s": round(dt / max(1, n_optsteps), 4),
                             "lr": scheduler.get_last_lr()[0],
@@ -161,13 +172,19 @@ def train(config: RunConfig) -> dict:
             tracer.record(step)
 
     wallclock = time.time() - t0
+    ram_tracer.stop()
 
-    # ---- persist memory trace + checkpoint ----------------------------
+    # ---- persist memory traces + checkpoint ---------------------------
     if len(tracer) == 0:
         tracer.record(max(step, 1))
+    if len(ram_tracer) == 0:
+        ram_tracer.record(max(step, 1))
     trace_path = Path("results/mem_trace") / f"{config.name}.csv"
     tracer.save_csv(trace_path)
     logger.log_artifact_path(trace_path, "mem_trace")
+    ram_trace_path = Path("results/mem_trace") / f"{config.name}.ram.csv"
+    ram_tracer.save_csv(ram_trace_path)
+    logger.log_artifact_path(ram_trace_path, "ram_trace")
 
     ckpt_dir = config.output_dir / "checkpoint"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
@@ -183,6 +200,9 @@ def train(config: RunConfig) -> dict:
         task=config.task,
         peak_vram_gb=round(tracer.peak_gb, 4),
         peak_reserved_gb=round(tracer.peak_reserved_gb, 4),
+        peak_ram_gb=round(ram_tracer.peak_ram_gb, 4),
+        peak_ram_delta_gb=round(ram_tracer.peak_ram_delta_gb, 4),
+        baseline_ram_gb=round(ram_tracer.baseline_ram_gb, 4),
         final_train_loss=round(final_loss, 5),
         wallclock_s=round(wallclock, 2),
         wallclock_per_epoch_s=round(wallclock * steps_per_epoch / max(1, step), 2),
