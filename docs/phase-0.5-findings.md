@@ -118,7 +118,14 @@ instability — flagged for a per-technique LR if it's used for real.
   one remaining Sprint 7 item** (the runs use `save_checkpoint=False` to protect
   disk — eval needs an inline-eval pass or a targeted re-run of the chosen route).
 - On-GPU 7B full FT trains **bf16 weights without an fp32 master copy** (a 29 GB
-  master doesn't fit) — a known precision caveat for all rows.
+  master doesn't fit) — a known precision caveat for all rows. **Scope:** this
+  applies only to *full-finetuning the 7B*. It does **not** affect the project's
+  Text-to-LoRA workflow (§1.1), where the 7B base is *frozen* and only the small
+  hypernetwork/LoRA is trained — those keep full fp32 Adam easily, and the
+  caveat never bites. It would only matter if a later phase full-finetunes the
+  base itself (e.g. an oracle baseline); the eval-quality column below measures
+  how much it actually costs. LOMO/GaLore are designed for bf16 full-FT, so the
+  hit is typically small.
 - **BAdam** covers ~10 blocks in 50 steps (switch_every=5); full coverage of all
   32 blocks needs a longer run. Memory/speed profile is representative.
 - **MeZO** and **FSDP CPU-offload** are not yet run (MeZO needs a custom
