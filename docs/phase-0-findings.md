@@ -49,8 +49,24 @@ See **`results/plots/gpu_mem_vs_iter_{model}-{task}.png}`** — each overlays th
 - W&B ran in **offline** mode (no credentials in this environment); all metrics are captured locally under `results/runs/*/` and in `results/runs/*/wandb/offline-run-*`. Sync later with `wandb sync`.
 - Per-method learning rates are sensible defaults, not tuned per cell.
 
+## Gated rungs (Sprint 7) — executed
+
+With an `HF_TOKEN` in place, the **exact same harness** ran on the gated bases,
+extending the matrix to the **full five-model ladder (75 cells)**:
+
+- **Gemma-2-2B-it is the VRAM stress rung and it fits.** Full-FT peaks **25.3–25.9 GB**
+  across the five tasks (≈6 GB under the 32 GB ceiling) using 8-bit Adam + gradient
+  checkpointing + batch 1 / grad-accum 8; LoRA/QLoRA stay at **~6.3–7.6 GB**. Full-FT
+  checkpoint is ~10 GB vs the 57 MB adapter.
+- **Llama-3.2-1B** (cross-family check): full-FT **~12.3–12.8 GB**, adapters **~4–5 GB**.
+- **Quality holds the pattern.** On financial sentiment the three methods are within a
+  point at every gated rung (Gemma 0.93 / 0.92 / 0.91 full-FT / LoRA / QLoRA;
+  Llama 0.88 / 0.89 / 0.87) — adapters match full-FT at <0.4 % of trainable params and
+  ~⅓ the memory. (Gemma full-FT underperforms its own adapters on glue-entailment,
+  0.59 vs 0.87 — a tuning/LR artifact on the capped data, not a memory issue.)
+
 ## Exit-gate status
 
-- ✅ Train **and merge/reload** a LoRA on the 5090 with comfortable headroom (adapter reload + generation smoke test passes; peaks far under 32 GB on the ungated ladder).
-- ✅ Three-way comparison table produced and reproducible across the ladder (every run rebuildable from its `config.yaml`; `scripts/build_table.py` regenerates the table + plots from `results/runs/`).
-- ⏳ Gated Gemma-2-2B / Llama-3.2 rungs (Sprint 7) deferred pending an `HF_TOKEN`.
+- ✅ Train **and merge/reload** a LoRA on the 5090 with comfortable headroom (adapter reload + generation smoke test passes; peaks far under 32 GB across the ladder).
+- ✅ Three-way comparison table produced and reproducible across the **full five-model ladder** (every run rebuildable from its `config.yaml`; `scripts/build_table.py` regenerates the table + plots from `results/runs/`).
+- ✅ Gated Gemma-2-2B / Llama-3.2 rungs (Sprint 7) **executed** — 75/75 cells; all peaks under 32 GB (max 25.94 GB, Gemma-2-2B full-FT).

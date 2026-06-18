@@ -137,7 +137,12 @@ Each sprint lists: **(1) Goal/objective · (2) What needs to be accomplished · 
 3. **Definition of done:** gated rows present in the comparison table + dataset; Gemma full-FT peak documented and under 32 GB; plots rendered.
 4. **Required testing:** token/licence preflight check; same metric-bound and VRAM-ceiling asserts as Sprint 6.
 
-> **Status:** wired and documented during the ungated Phase 0 build; **execution deferred** until an `HF_TOKEN` is provided (see `scripts/run_matrix.py --tier gated` and `configs/models/`).
+> **Status: ✅ complete.** Executed once an `HF_TOKEN` was provided — Gemma-2-2B-it
+> and Llama-3.2-1B-Instruct ran the full `{full FT, LoRA, QLoRA} × 5 tasks` matrix.
+> All 75 cells present in `results/comparison.*`; Gemma-2-2B full-FT peaks 25.9 GB
+> (< 32 GB) with 8-bit Adam + gradient checkpointing + batch 1 / grad-accum 8. See
+> `docs/phase-0-findings.md` (gated rungs section). Run via
+> `scripts/run_matrix.py --tier all` (or `--config configs/matrix/run-matrix.yaml`).
 
 ---
 
