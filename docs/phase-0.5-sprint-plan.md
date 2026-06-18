@@ -189,7 +189,15 @@ Each sprint lists: **(1) Goal/objective · (2) Requirements (what needs to be ac
 3. **Definition of done:** MeZO and FSDP have rows (fits + VRAM + RAM + speed + eval, or `fits=no` with the memory-math reason); clipped-LOMO table present; dual-task (task843 + task1344) trade-off tables with an eval-quality column; combinations table; recommendation updated to reflect quality (not just memory/speed); all committed + pushed.
 4. **Required testing:** MeZO confirmed forward-only (no grads; VRAM ≈ inference floor); FSDP within both memory ceilings *or* `fits=no` reconciled with the offload memory-math; clipped LOMO does not diverge (loss bounded) and clears chance on eval; per-technique eval scores reconcile across the two tasks (ranking stable); table schema validation (no silently-empty cells).
 
-> **Status: ✅ complete.** MeZO (13.8 GB forward-only floor; eval ~0 at 50 steps — needs far more), clipped LOMO (0.84 EM @ lr 5e-4 — the headroom winner), dual-task eval (task843 + task1344), and the combinations matrix (BAdam+8bit → 15.7 GB @ 0.80 EM) are all in the findings. FSDP CPU-offload: see findings (offload family). Results: `results/phase05/{feasibility_table,feasibility_table_task1344,combinations,clipped_lomo}.{csv,parquet,md}`.
+> **Status: ✅ complete.** All deferred work landed in the findings + tables:
+> **MeZO** (13.77 GB — the memory floor; eval 0.0 even at 500 steps, needs
+> thousands), **FSDP CPU-offload** (FITS at 62 GB RAM — no fp32 master, unlike
+> DeepSpeed — but ~9–13 s/step, ~45× slower → a fallback, not a default),
+> **clipped LOMO** (0.84 EM @ lr 5e-4 — the headroom winner), **dual-task eval**
+> (task843 + task1344), and the **combinations matrix** (BAdam+8bit → 15.7 GB @
+> 0.80 EM). Key correction: offload is *viable here via FSDP*, only DeepSpeed
+> OOMs. Only ZeRO-Infinity (NVMe) remains unrun — unnecessary (FSDP shows offload
+> fits in RAM). Results: `results/phase05/{feasibility_table,feasibility_table_task1344,combinations,clipped_lomo}.{csv,parquet,md}`.
 
 ---
 
