@@ -68,6 +68,8 @@ docs/phase-0.5-findings.md     the feasibility note (written in Sprint 6)
 
 Each sprint lists: **(1) Goal/objective · (2) Requirements (what needs to be accomplished) · (3) Definition of done · (4) Required testing.**
 
+> **W&B applies to every technique run.** Sprints 2–5 all execute through the Sprint 1 `benchmark()` harness, so each technique run **logs to W&B by construction** (live VRAM/RAM/loss curves + final summary row + config snapshot, named `MM_DD_YYYY_HR_MM_SEC_mistral7B_<technique>`). It stays **best-effort/non-blocking** with an offline-local fallback — never a gate (project working pref). The Sprint 6 report aggregates these runs.
+
 ### Sprint 1 — Memory Math, Measurement Harness & RAM Probe  *(BLOCKER — must finish first)*
 
 1. **Goal:** A fixed, trustworthy measurement protocol and the instrumentation to capture **both** peak VRAM **and** peak system RAM **and** wall-clock per technique — so every later row is apples-to-apples.
@@ -84,9 +86,10 @@ Each sprint lists: **(1) Goal/objective · (2) Requirements (what needs to be ac
    - Extend the Sprint-1 VRAM helper from Phase 0 with a **host-RAM (RSS) probe** — a sampled background thread recording process + children RSS (use `psutil`) so offload's CPU-side footprint is captured, not just GPU.
    - Define the **fixed measurement config**: `Mistral-7B-Instruct-v0.2`, 1–2 SNI tasks, locked batch size, sequence length, grad-accum, seed, and step count. Commit it as `configs/phase05/_fixed_protocol.yaml`.
    - A `benchmark(technique_config)` entrypoint that runs N steps, samples `gpu_mem_gb` and `ram_gb` per step, and emits a per-run trace + a summary row (`peak_vram_gb`, `peak_ram_gb`, `wallclock_per_step_s`, `tokens_per_s`, `fits`).
+   - **W&B logging (best-effort, non-blocking — reuse the Phase 0 logging layer):** every `benchmark()` run inits a W&B run and logs, per step, the live `gpu_mem_gb` / `ram_gb` curves + `train_loss` / `tokens_per_s`, and at the end the summary row + full config snapshot. **Run name:** `MM_DD_YYYY_HR_MM_SEC_mistral7B_<technique>` (matching Phase 0's scheme, with `<technique>` as the varying axis). Project: a dedicated Phase 0.5 W&B project. If creds are absent, fall back to `WANDB_MODE=offline` and persist locally under `results/phase05/runs/*/` (sync later with `wandb sync`) — **W&B never blocks or gates a run** (per project working prefs).
    - Confirm the Mistral-7B base loads (gated model — see [`gated-models-setup.md`](./gated-models-setup.md); needs `HF_TOKEN` + accepted license).
-3. **Definition of done:** the harness runs an arbitrary technique config for N steps and writes a trace (VRAM **and** RAM vs. step) + a summary row; the RAM probe returns sane non-zero numbers; the fixed protocol is committed; Mistral-7B loads on this box.
-4. **Required testing:** RAM probe validated against a known allocation (allocate ~X GB, probe reads ~X GB); VRAM helper matches `nvidia-smi` within tolerance; the fixed-protocol config round-trips (load → run → reproduce identical seed/batch/seq); harness emits a schema-valid summary row on a trivial dummy run.
+3. **Definition of done:** the harness runs an arbitrary technique config for N steps and writes a trace (VRAM **and** RAM vs. step) + a summary row; **the run logs to W&B online when creds are present and falls back to offline-local without blocking when they aren't**; the RAM probe returns sane non-zero numbers; the fixed protocol is committed; Mistral-7B loads on this box.
+4. **Required testing:** RAM probe validated against a known allocation (allocate ~X GB, probe reads ~X GB); VRAM helper matches `nvidia-smi` within tolerance; the fixed-protocol config round-trips (load → run → reproduce identical seed/batch/seq); harness emits a schema-valid summary row on a trivial dummy run; **an offline (`WANDB_MODE=offline`) dummy run produces the expected local W&B artifacts and a disabled/absent-cred run still completes.**
 
 ### Sprint 2 — Offload Baseline: ZeRO-Offload + 8-bit Adam  *(needs S1; the "just works" feasibility proof)*
 
