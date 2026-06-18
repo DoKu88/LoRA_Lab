@@ -60,7 +60,10 @@ ABLATION_CELLS = [
 
 def run_one(label: str, overrides: dict, steps: int, timeout_s: int) -> dict:
     sets = [f"{k}={v}" for k, v in overrides.items()]
-    sets += [f"hparams.max_steps={steps}"]
+    # Distinct run_name per label so output dirs + mem-traces don't overwrite
+    # each other (every technique otherwise derives the same method-model-task
+    # name) — the per-technique plot overlays depend on distinct trace files.
+    sets += [f"run_name=p05_{label}", f"hparams.max_steps={steps}"]
     cmd = [sys.executable, "scripts/benchmark.py", "--protocol", PROTOCOL,
            "--wandb-mode", "offline", "--set", *sets]
     env = dict(os.environ, CUDA_HOME=ENV_PREFIX)
@@ -107,12 +110,15 @@ def write_outputs(rows: list[dict]) -> None:
                         "wallclock_per_epoch_s", "final_train_loss", "steps",
                         "status", "run_seconds", "note"] if c in df.columns]
     df = df[cols + [c for c in df.columns if c not in cols]]
-    df.to_csv(OUT_DIR / "feasibility_table.csv", index=False)
+    df.to_csv(OUT_DIR / "feasibility_table.csv", index=False)  # CSV is the source of truth
     try:
         df.to_parquet(OUT_DIR / "feasibility_table.parquet", index=False)
     except Exception as e:  # noqa: BLE001
         print(f"[warn] parquet write failed ({e}); csv written")
-    (OUT_DIR / "feasibility_table.md").write_text(df[cols].to_markdown(index=False))
+    try:  # markdown is nice-to-have (needs tabulate); never let it crash the batch
+        (OUT_DIR / "feasibility_table.md").write_text(df[cols].to_markdown(index=False))
+    except Exception as e:  # noqa: BLE001
+        print(f"[warn] markdown render failed ({e}); csv/parquet written")
     print(f"\n== wrote {len(rows)} rows -> {OUT_DIR}/feasibility_table.(csv|parquet|md)")
 
 

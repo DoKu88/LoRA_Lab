@@ -21,11 +21,21 @@ tokenizers==0.22.2
 safetensors==0.8.0
 sentencepiece==0.2.1
 
+# --- Phase 0.5 full-FT technique libs (install with --no-deps to preserve the
+#     cu128 torch above; deepspeed also needs a CUDA toolkit + CUDA_HOME set) ---
+deepspeed==0.19.2      # ZeRO-Offload (fp32 CPUAdam — measured fits=no on 7B here)
+galore-torch==1.0      # GaLore / Q-GaLore (GaLoreAdamW / GaLoreAdamW8bit)
+lomo-optim==0.1.1      # LOMO / AdaLOMO (fused backward+update)
+badam==1.4             # BAdam block-coordinate optimizer
+# deepspeed's CUDA toolkit is NOT pip: conda install -n lora_lab -c nvidia cuda-toolkit=12.8
+
 # --- numerics / io ---
 numpy==2.4.4
 pandas>=2.2
 pyarrow>=17.0          # parquet results dataset
 matplotlib>=3.9        # gpu-mem-vs-iteration plot
+tabulate>=0.9          # markdown table render (df.to_markdown)
+psutil>=5.9            # host-RAM (RSS) probe — Phase 0.5 peak-RAM measurement
 pyyaml>=6.0            # config + tasks manifest
 rouge-score>=0.1.2     # ROUGE-L eval metric
 
