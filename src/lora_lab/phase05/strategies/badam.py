@@ -22,10 +22,20 @@ def run_badam(config: RunConfig) -> dict:
     from badam import BlockOptimizer
 
     model, tok = load_bf16_model(config)
-    base = torch.optim.AdamW(
-        model.parameters(), lr=config.hparams.lr,
-        weight_decay=config.hparams.weight_decay,
-    )
+    # Combinable with 8-bit: BAdam already shrinks optimizer state to one block;
+    # an 8-bit base optimizer shrinks that block's state further still.
+    if config.levers.use_8bit_adam:
+        import bitsandbytes as bnb
+
+        base = bnb.optim.AdamW8bit(
+            model.parameters(), lr=config.hparams.lr,
+            weight_decay=config.hparams.weight_decay,
+        )
+    else:
+        base = torch.optim.AdamW(
+            model.parameters(), lr=config.hparams.lr,
+            weight_decay=config.hparams.weight_decay,
+        )
     optimizer = BlockOptimizer(
         base_optimizer=base,
         named_parameters_list=list(model.named_parameters()),

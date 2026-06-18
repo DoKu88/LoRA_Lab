@@ -58,6 +58,29 @@ ABLATION_CELLS = [
 ]
 
 
+# Method combinations / tuning (--combos): how to spend the headroom the winning
+# techniques leave free, and whether levers stack onto them. Mostly LOMO (the
+# recommended route) since its ~17 GB free is what invites combination.
+COMBO_MATRIX = [
+    # throughput: spend LOMO's headroom on a bigger batch (fused = no accum)
+    ("lomo_bs4", {"technique.name": "lomo", "hparams.batch_size": "4",
+                  "levers.gradient_checkpointing": "true"}),
+    ("lomo_bs8", {"technique.name": "lomo", "hparams.batch_size": "8",
+                  "levers.gradient_checkpointing": "true"}),
+    # speed: LOMO is light enough it may not need checkpointing — drop the recompute
+    ("lomo_nockpt", {"technique.name": "lomo", "levers.gradient_checkpointing": "false"}),
+    # combine both: bigger batch AND no checkpointing
+    ("lomo_bs4_nockpt", {"technique.name": "lomo", "hparams.batch_size": "4",
+                         "levers.gradient_checkpointing": "false"}),
+    # block-coordinate + 8-bit base optimizer (stack two memory tricks)
+    ("badam_8bit", {"technique.name": "badam", "technique.badam_switch_every": "5",
+                    "levers.use_8bit_adam": "true", "levers.gradient_checkpointing": "true"}),
+    # GaLore rank sweep: lower rank = less projection state (memory/quality knob)
+    ("galore_rank64", {"technique.name": "galore", "technique.galore_rank": "64",
+                       "levers.gradient_checkpointing": "true"}),
+]
+
+
 def run_one(label: str, overrides: dict, steps: int, timeout_s: int) -> dict:
     sets = [f"{k}={v}" for k, v in overrides.items()]
     # Distinct run_name per label so output dirs + mem-traces don't overwrite
@@ -102,7 +125,7 @@ def _exit_137_note(row: dict) -> dict:
     return row
 
 
-def write_outputs(rows: list[dict]) -> None:
+def write_outputs(rows: list[dict], basename: str = "feasibility_table") -> None:
     import pandas as pd
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -110,25 +133,28 @@ def write_outputs(rows: list[dict]) -> None:
     df = pd.DataFrame(rows)
     cols = [c for c in ["label", "technique", "fits", "peak_vram_gb", "peak_ram_gb",
                         "peak_ram_delta_gb", "wallclock_per_step_s",
-                        "wallclock_per_epoch_s", "final_train_loss", "steps",
-                        "status", "run_seconds", "note"] if c in df.columns]
+                        "wallclock_per_epoch_s", "eval_score", "eval_metric",
+                        "final_train_loss", "steps", "status", "run_seconds",
+                        "note"] if c in df.columns]
     df = df[cols + [c for c in df.columns if c not in cols]]
-    df.to_csv(OUT_DIR / "feasibility_table.csv", index=False)  # CSV is the source of truth
+    df.to_csv(OUT_DIR / f"{basename}.csv", index=False)  # CSV is the source of truth
     try:
-        df.to_parquet(OUT_DIR / "feasibility_table.parquet", index=False)
+        df.to_parquet(OUT_DIR / f"{basename}.parquet", index=False)
     except Exception as e:  # noqa: BLE001
         print(f"[warn] parquet write failed ({e}); csv written")
     try:  # markdown is nice-to-have (needs tabulate); never let it crash the batch
-        (OUT_DIR / "feasibility_table.md").write_text(df[cols].to_markdown(index=False))
+        (OUT_DIR / f"{basename}.md").write_text(df[cols].to_markdown(index=False))
     except Exception as e:  # noqa: BLE001
         print(f"[warn] markdown render failed ({e}); csv/parquet written")
-    print(f"\n== wrote {len(rows)} rows -> {OUT_DIR}/feasibility_table.(csv|parquet|md)")
+    print(f"\n== wrote {len(rows)} rows -> {OUT_DIR}/{basename}.(csv|parquet|md)")
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true", help="3 steps/run shake-out")
     ap.add_argument("--ablation", action="store_true", help="also run the lever ablation")
+    ap.add_argument("--combos", action="store_true",
+                    help="run the method-combination matrix -> combinations.* (instead of techniques)")
     ap.add_argument("--steps", type=int, default=None, help="override steps/run")
     ap.add_argument("--timeout-min", type=int, default=60, help="per-run timeout")
     ap.add_argument("--only", nargs="*", default=None, help="run only these labels")
@@ -137,16 +163,21 @@ def main() -> int:
     steps = args.steps if args.steps is not None else (3 if args.quick else 50)
     timeout_s = args.timeout_min * 60
 
-    plan = list(TECHNIQUE_MATRIX)
-    if args.ablation:
-        for label, delta in ABLATION_CELLS:
-            ov = dict(ABLATION_ANCHOR)
-            ov.update(delta)
-            plan.append((label, ov))
+    if args.combos:
+        plan = list(COMBO_MATRIX)
+        basename = "combinations"
+    else:
+        plan = list(TECHNIQUE_MATRIX)
+        if args.ablation:
+            for label, delta in ABLATION_CELLS:
+                ov = dict(ABLATION_ANCHOR)
+                ov.update(delta)
+                plan.append((label, ov))
+        basename = "feasibility_table"
     if args.only:
         plan = [(l, o) for (l, o) in plan if l in args.only]
 
-    print(f"== Phase 0.5 matrix: {len(plan)} runs, {steps} steps each, "
+    print(f"== Phase 0.5 matrix ({basename}): {len(plan)} runs, {steps} steps each, "
           f"timeout {args.timeout_min}min/run")
     rows = []
     for label, overrides in plan:
@@ -154,8 +185,8 @@ def main() -> int:
         rows.append(row)
         print(f"   -> {label}: fits={row.get('fits')} "
               f"vram={row.get('peak_vram_gb')} ram={row.get('peak_ram_gb')} "
-              f"status={row.get('status')}")
-        write_outputs(rows)  # checkpoint after every run so a crash keeps partials
+              f"eval={row.get('eval_score')} status={row.get('status')}")
+        write_outputs(rows, basename)  # checkpoint after every run so a crash keeps partials
     print("\n== MATRIX COMPLETE")
     return 0
 
