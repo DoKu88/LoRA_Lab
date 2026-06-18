@@ -62,9 +62,9 @@ accumulate 8). **Quality = held-out exact-match** on task843 / task1344.
 | AdaLOMO | fused, adaptive | ✅ / ✅ | 15.10 GB | 1.8 GB | 0.60 s | 0.45 / 0.43 | LR-sensitive; weak at shared 1e-5 |
 | **LOMO + clip** @ lr 5e-4 | fused, two-pass grad-clip | ✅ / ✅ | **14.60 GB** | 1.8 GB | 0.47 s | **0.84** (t843) | ★ lightest VRAM (~17 GB free) at top-tier quality — the headroom pick |
 | LOMO (no clip) @ lr 1e-5 | fused backward, no clip | ✅ / ✅ | 14.60 GB | 1.7 GB | 0.29 s | 0.00 / 0.59 | does NOT learn at the Adam-scale LR; needs clip + lr ~5e-4 |
-| ZeRO-Offload + fp32 Adam | DeepSpeed ZeRO-2, CPU optimizer offload | ❌ (RAM) / ❌ | — | ~95 GB (OOM) | — | — | fp32 CPUAdam ~87 GB > avail RAM; no 8-bit CPU optimizer |
-| FSDP CPU-offload | — | not run | | | | | fp32 offload would OOM RAM like DeepSpeed |
-| MeZO | — | not run | | | | | needs custom zeroth-order loop |
-| ZeRO-Infinity (NVMe) | — | not run | | | | | fallback only — RAM didn't pinch the on-GPU routes |
+| **FSDP CPU-offload** | params→CPU, fp32 AdamW, bf16 | ✅ / ✅ | 27.50 GB | **62.5 GB** | ~9–13 s | learns (loss↓) | offload FITS (no fp32 master) but **~45× slower** — fallback, not default |
+| ZeRO-Offload + fp32 Adam | DeepSpeed ZeRO-2, CPU optimizer offload | ❌ (RAM) / ❌ | — | ~95 GB (OOM) | — | — | fp32 CPUAdam +master ~87 GB > avail RAM; no 8-bit CPU optimizer |
+| MeZO | zeroth-order, forward-only | ✅ / ✅ | **13.77 GB** | 5.2 GB | 0.22 s | 0.00 (500 steps too) | lowest VRAM (no grads/optimizer) but needs thousands of steps |
+| ZeRO-Infinity (NVMe) | — | not run | | | | | unnecessary — FSDP shows offload fits in RAM |
 
 **Combinations** (task843): **LOMO + gradient clipping @ lr 5e-4 → 14.6 GB at 0.84 EM** (the headroom winner — clipping fixes the divergence, `clipped_lomo.csv`); **BAdam + 8-bit → 15.7 GB at 0.80 EM** (memory tricks stack); GaLore rank 64 ≈ rank 128 quality at less state (`combinations.csv`). AdaLOMO stays weak even clipped. See [`./phase-0.5-findings.md`](./phase-0.5-findings.md) for the full analysis.

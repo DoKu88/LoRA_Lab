@@ -29,8 +29,14 @@ alone is misleading — the held-out eval is what picks the winner:**
   the headroom winner. This round-trip (picked → withdrawn on eval → restored
   with the right recipe) is the spike's clearest lesson: *measure quality, and
   tune the optimizer to its family.*
-- The classic CPU-offload route (DeepSpeed ZeRO-Offload) is not viable: its fp32
-  optimizer state (~87 GB) exceeds available RAM.
+- **CPU offload is viable — but only via FSDP, and it's ~45× slower.** DeepSpeed
+  ZeRO-Offload OOMs (its fp32 master copy pushes state to ~87 GB > available RAM),
+  but **FSDP CPU-offload fits at 62 GB RAM** (bf16 params, no fp32 master) and
+  trains — at **~9–13 s/step vs ~0.3 s on-GPU**. So offload works as a fallback,
+  not a default.
+- **MeZO is the memory floor (13.8 GB — no grads, no optimizer state) but does not
+  converge in this budget** (eval 0.0 even at 500 steps; zeroth-order needs
+  thousands). It *fits* easily; it doesn't *learn* fast enough to be useful here.
 
 ---
 
@@ -42,7 +48,19 @@ random-token batches (feasibility only — loss values not meaningful).
 | Path | Optimizer | Fits? | Peak VRAM | Peak RAM | s/step | Verdict |
 |---|---|---|---|---|---|---|
 | **8-bit paged AdamW** (model on GPU) | `bnb.PagedAdamW8bit` | ✅ **yes** | **27.24 GB** | 4.5 GB | **1.70** | working fast baseline |
-| DeepSpeed ZeRO-2 + CPU offload | `DeepSpeedCPUAdam` (fp32) | ❌ **no** | — | OOM-killed @ init | — | fp32 state ~84 GB > ~87 GB avail |
+| **FSDP CPU-offload** (params→CPU) | fp32 AdamW | ✅ **yes** | 27.5 GB | **62 GB** | **~9–13** | offload *works* — but PCIe-bound, ~45× slower |
+| DeepSpeed ZeRO-2 + CPU offload | `DeepSpeedCPUAdam` (fp32) | ❌ **no** | — | OOM-killed @ init | — | fp32 state ~87 GB > ~87 GB avail |
+
+**The two offload frameworks diverge — and the reason is instructive.** Same idea
+(optimizer/params on CPU), opposite outcome: **DeepSpeed OOMs, FSDP fits.**
+DeepSpeed ZeRO-Offload keeps an **fp32 master copy** of the weights on CPU
+(+29 GB) on top of fp32 m+v; FSDP with bf16 mixed precision keeps **bf16 params,
+no separate fp32 master**, so its CPU footprint is ~62 GB — under the ~87 GB
+ceiling. So "offload" isn't one thing: the *framework's* precision bookkeeping
+decides feasibility here. FSDP proves offload is reachable on this box; its
+~9–13 s/step (vs ~0.3 s on-GPU) is the PCIe tax that makes it a fallback, not a
+default. (Single-GPU FSDP runs `NO_SHARD` + `CPUOffload` — nothing to shard, but
+params still stream CPU↔GPU.)
 
 ### Why fp32 ZeRO-Offload fails here (the memory math)
 **fp32 is the killer, and DeepSpeed gives no way around it.** DeepSpeed CPU
@@ -100,7 +118,9 @@ micro-batch; the others accumulate 8). Sources:
 | **BAdam** | ✅ | 17.60 GB | 1.9 GB | **0.13** | 14.4 GB | 0.856 | 0.25 |
 | baseline (paged 8-bit) | ✅ | 27.64 GB | 1.9 GB | 0.28 | 4.4 GB | 0.608 | 0.49 |
 | AdaLOMO | ✅ | 15.10 GB | 1.8 GB | 0.60 | 16.9 GB | 0.453 | 1.92 |
-| LOMO | ✅ | **14.60 GB** | 1.7 GB | 0.29 | **17.4 GB** | **0.000** | 3.77 |
+| LOMO (no clip) | ✅ | 14.60 GB | 1.7 GB | 0.29 | 17.4 GB | **0.000** | 3.77 |
+| MeZO | ✅ | **13.77 GB** | 5.2 GB | 0.22³ | **18.2 GB** | **0.000** | 12.0 |
+| FSDP CPU-offload | ✅ | 27.50 GB | **62.5 GB** | ~9.4⁴ | 4.5 GB | n/a⁴ | ~0.47 |
 | fp32 ZeRO-Offload | ❌ | — | ~95 GB (OOM) | — | — | — | — |
 
 ### Table 2 — task1344 (RTE entailment, binary — the harder task)
@@ -114,13 +134,22 @@ micro-batch; the others accumulate 8). Sources:
 | baseline (paged 8-bit) | ✅ | 27.65 GB | 1.9 GB | 0.31 | 4.4 GB | 0.528 | 0.23 |
 | AdaLOMO | ✅ | 15.15 GB | 1.8 GB | 0.62 | 16.9 GB | 0.431 | 5.25 |
 
+*(MeZO and FSDP measured on task843 only — see Table 1. ³ MeZO's "step" is 2
+forward passes (no backward); even at 500 steps eval stays 0.0 — zeroth-order
+needs thousands. ⁴ FSDP s/step is offload-bound (~9–13 s); its quality wasn't
+eval'd — generation under CPU-offload is impractically slow and FSDP isn't a
+recommended route given the ~45× train slowdown; loss does decrease.)*
+
 ### What the numbers say (and how the two tasks agree)
-- **Feasibility:** every VRAM-direct technique fits; the offload route is the only
-  family that fails (fp32 CPU-Adam state > RAM — see the breakdown above).
-- **Peak RAM is trivial for every on-GPU method (~1.7–2.0 GB).** That's just
-  Python + the data/model-load working set — these techniques **don't touch the
-  96 GB pool at all** (states live on the GPU). System RAM is a non-constraint
-  here; it only mattered for the offload route, which needed ~95 GB and OOMed.
+- **Feasibility:** every VRAM-direct technique fits; **FSDP offload also fits**
+  (62 GB RAM) but is ~45× slower; **only DeepSpeed offload fails** (fp32 master
+  pushes it over RAM — see the breakdown above). **MeZO fits (13.8 GB floor) but
+  doesn't converge** in budget.
+- **Peak RAM splits the families cleanly:** on-GPU methods use **~1.7–5 GB**
+  (just Python + working set — they never touch the 96 GB pool), while the
+  **offload routes are RAM-bound** (FSDP 62 GB; DeepSpeed wanted ~87 GB and
+  OOMed). So system RAM is a non-constraint *unless* you offload — which is the
+  whole reason the on-GPU methods win here.
 - **Quality leaders are consistent across both tasks: Q-GaLore / GaLore / BAdam
   (0.83–0.88 EM).** baseline (paged 8-bit) is mid (0.53–0.61). **LOMO and AdaLOMO
   underperform** — and that only shows up in *eval*, not in memory/speed.
@@ -217,5 +246,11 @@ poorly and stays LR-sensitive (0.62 / 0.34); use plain clipped LOMO.
   there). See the dedicated note above.
 - **BAdam** covers ~10 of 32 blocks in 50 steps (switch_every=5); full coverage
   needs a longer run. Memory/speed/quality profile is representative.
-- **MeZO** and **FSDP CPU-offload** not run (MeZO needs a custom zeroth-order
-  loop; FSDP fp32 offload would OOM RAM like DeepSpeed).
+- **MeZO** (Sprint 8) runs at the 13.8 GB memory floor but stays at 0.0 EM even
+  at 500 steps — zeroth-order needs orders more steps; not usable in this budget.
+- **FSDP CPU-offload** (Sprint 8) *fits* (62 GB RAM, no fp32 master — unlike
+  DeepSpeed) and learns, but at ~9–13 s/step it's ~45× slower than on-GPU; a
+  viable fallback, not a default. Its eval quality wasn't measured (generation
+  under offload is impractically slow).
+- **ZeRO-Infinity (NVMe)** still not run — unnecessary, since FSDP already shows
+  the offload route fits in RAM (no need to spill to disk).
