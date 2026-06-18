@@ -60,10 +60,11 @@ accumulate 8). **Quality = held-out exact-match** on task843 / task1344.
 | **BAdam** | BlockOptimizer, switch 5 | ✅ / ✅ | 17.60 GB | 1.9 GB | **0.13 s** | 0.86 / 0.75 | ★ quality *and* headroom; +8-bit → 15.7 GB |
 | paged 8-bit AdamW (baseline) | bf16 + PagedAdamW8bit + grad-ckpt | ✅ / ✅ | 27.64 GB | 1.9 GB | 0.28 s | 0.61 / 0.53 | simplest; mid quality; 8-bit Adam load-bearing |
 | AdaLOMO | fused, adaptive | ✅ / ✅ | 15.10 GB | 1.8 GB | 0.60 s | 0.45 / 0.43 | LR-sensitive; weak at shared 1e-5 |
-| LOMO | fused backward, **no clip** | ✅ / ✅ | **14.60 GB** | 1.7 GB | 0.29 s | **0.00 / 0.59** | lightest, but does NOT learn at lr 1e-5 (SGD-like; needs higher LR + clipping) |
+| **LOMO + clip** @ lr 5e-4 | fused, two-pass grad-clip | ✅ / ✅ | **14.60 GB** | 1.8 GB | 0.47 s | **0.84** (t843) | ★ lightest VRAM (~17 GB free) at top-tier quality — the headroom pick |
+| LOMO (no clip) @ lr 1e-5 | fused backward, no clip | ✅ / ✅ | 14.60 GB | 1.7 GB | 0.29 s | 0.00 / 0.59 | does NOT learn at the Adam-scale LR; needs clip + lr ~5e-4 |
 | ZeRO-Offload + fp32 Adam | DeepSpeed ZeRO-2, CPU optimizer offload | ❌ (RAM) / ❌ | — | ~95 GB (OOM) | — | — | fp32 CPUAdam ~87 GB > avail RAM; no 8-bit CPU optimizer |
 | FSDP CPU-offload | — | not run | | | | | fp32 offload would OOM RAM like DeepSpeed |
 | MeZO | — | not run | | | | | needs custom zeroth-order loop |
 | ZeRO-Infinity (NVMe) | — | not run | | | | | fallback only — RAM didn't pinch the on-GPU routes |
 
-**Combinations** (task843, `results/phase05/combinations.csv`): **BAdam + 8-bit base optimizer → 15.7 GB at 0.80 EM** (memory tricks stack: LOMO-class headroom *with* quality); GaLore rank 64 ≈ rank 128 quality at less state; LOMO LR sweep {1e-4,5e-4,1e-3} all fail (chance/divergence) → needs gradient clipping. See [`./phase-0.5-findings.md`](./phase-0.5-findings.md) for the full analysis.
+**Combinations** (task843): **LOMO + gradient clipping @ lr 5e-4 → 14.6 GB at 0.84 EM** (the headroom winner — clipping fixes the divergence, `clipped_lomo.csv`); **BAdam + 8-bit → 15.7 GB at 0.80 EM** (memory tricks stack); GaLore rank 64 ≈ rank 128 quality at less state (`combinations.csv`). AdaLOMO stays weak even clipped. See [`./phase-0.5-findings.md`](./phase-0.5-findings.md) for the full analysis.

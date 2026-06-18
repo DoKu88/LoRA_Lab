@@ -17,12 +17,18 @@ torch 2.10+cu128, conda env `lora_lab`. Base: `Mistral-7B-Instruct-v0.2` (7.24 B
 GPU; the CPU-offload route is the only one that fails.** Every VRAM-direct
 technique fits in 32 GB and uses negligible system RAM (~2 GB). But **memory/speed
 alone is misleading — the held-out eval is what picks the winner:**
-- **Best memory-headroom + quality (for stacking a hypernetwork): BAdam + 8-bit
-  Adam — ~15.7 GB, ~0.80 EM, ~16 GB of VRAM free.**
+- **Best memory-headroom + quality (for stacking a hypernetwork): LOMO with
+  gradient clipping @ lr 5e-4 — 14.6 GB, 0.84 EM, ~17 GB of VRAM free.** The
+  lightest route, and once clipped it reaches top-tier quality.
+- **Fastest at competitive quality: BAdam (17.6 GB, 0.13 s/micro, 0.86 EM)**, or
+  BAdam + 8-bit (15.7 GB, 0.80 EM) if you want BAdam at LOMO-class memory.
 - **Best raw quality: Q-GaLore / GaLore (~0.83–0.88 EM)**, but ~28–30 GB and 2.7× slower.
-- **LOMO looks best on paper (14.6 GB, fast) but does NOT learn at the shared LR
-  (0.0 EM on the 3-class task)** — it's SGD-like and needs a different LR +
-  gradient clipping. The earlier "LOMO" recommendation is *withdrawn* on the eval.
+- **The LOMO lesson:** *unclipped* LOMO does NOT learn at the shared lr 1e-5
+  (0.0 EM) and diverges at higher LR — memory/speed alone would have mis-picked
+  it. **Gradient clipping + lr ~5e-4 fixes it** (0.0 → 0.84), restoring LOMO as
+  the headroom winner. This round-trip (picked → withdrawn on eval → restored
+  with the right recipe) is the spike's clearest lesson: *measure quality, and
+  tune the optimizer to its family.*
 - The classic CPU-offload route (DeepSpeed ZeRO-Offload) is not viable: its fp32
   optimizer state (~87 GB) exceeds available RAM.
 
@@ -159,26 +165,52 @@ All on task843, same protocol.
    checkpointing doesn't help until the optimizer itself is stabilized. Treat
    LOMO's memory win as *unrealized* until clipping is added (a follow-up).
 
-## Recommendation (corrected by the eval results)
-- **Best memory headroom *with* quality → BAdam + 8-bit Adam (~15.7 GB, ~0.80 EM,
-  ~16 GB free).** This is the route to stack a hypernetwork on (Phase 2): it
-  leaves roughly half the GPU free and actually learns. *(The earlier
-  memory-only pick, LOMO, is withdrawn — it doesn't learn at this LR.)*
-- **Best raw quality → Q-GaLore or GaLore (0.83–0.88 EM)**, but at ~28–30 GB they
-  leave little headroom and are ~2.7× slower; pick these if quality is paramount
-  and you don't need room on the GPU for anything else.
-- **Simplest / most standard → paged 8-bit AdamW baseline** (27.6 GB), but its
-  quality is mid (0.53–0.61) at 50 steps.
-- **Avoid:** plain LOMO/AdaLOMO at the shared LR (don't learn), and fp32 DeepSpeed
-  offload (OOM).
+## LOMO with gradient clipping — the fix (`results/phase05/clipped_lomo.csv`)
+
+Unclipped LOMO failed two ways (undertrained at lr 1e-5, diverged at 5e-4/1e-3).
+LOMO's paper uses a two-pass clipped update (`grad_norm` then `fused_backward`
+over a retained graph); we'd disabled it for speed. Re-running *with* clipping:
+
+| Run (task843) | Peak VRAM | Peak RAM | s/micro-batch | eval EM |
+|---|---|---|---|---|
+| **LOMO clip, lr 5e-4** | **14.60 GB** | 1.8 GB | 0.47 | **0.840** |
+| LOMO clip, lr 1e-3 | 14.60 GB | 1.8 GB | 0.47 | 0.840 |
+| LOMO clip, lr 1e-4 | 14.60 GB | 1.8 GB | 0.47 | 0.812 |
+| AdaLOMO clip, lr 5e-4 | 15.10 GB | 1.8 GB | 0.81 | 0.624 |
+| AdaLOMO clip, lr 1e-3 | 15.10 GB | 1.8 GB | 0.81 | 0.337 |
+
+**Clipping resolves the LOMO problem.** At lr 5e-4 it jumps **0.00 → 0.84 EM** —
+tied with the quality leaders (Q-GaLore 0.88, BAdam 0.86) but at the **lowest
+VRAM of any technique (14.6 GB, ~17 GB free)**. The clipped update is two
+backward passes, so speed drops from 0.29 → 0.47 s/micro-batch — still faster
+than GaLore (0.75) and the memory is unchanged (`grad_norm` clears grads, adds
+nothing). **AdaLOMO does not benefit** — adaptive scaling + clipping interacts
+poorly and stays LR-sensitive (0.62 / 0.34); use plain clipped LOMO.
+
+## Recommendation (final, eval-driven)
+- **★ Best for stacking a hypernetwork (max headroom + quality): LOMO + gradient
+  clipping @ lr ~5e-4 — 14.6 GB, 0.84 EM, ~17 GB VRAM free, 0.47 s/micro.** The
+  lightest route, top-tier quality once clipped. Use a per-technique LR (≈5e-4),
+  not the Adam-scale 1e-5.
+- **Fastest at competitive quality: BAdam (17.6 GB, 0.13 s/micro, 0.86 EM)** — or
+  **BAdam + 8-bit (15.7 GB, 0.80 EM)** for BAdam at LOMO-class memory. Pick BAdam
+  if per-step speed matters more than the last ~3 GB of headroom.
+- **Best raw quality: Q-GaLore / GaLore (0.83–0.88 EM)** — but ~28–30 GB (little
+  headroom) and ~2.7× slower. Choose only if quality is paramount and the GPU
+  doesn't need room for anything else.
+- **Simplest / most standard: paged 8-bit AdamW baseline** (27.6 GB) — mid quality
+  (0.53–0.61) at 50 steps; fine if you just want vanilla Adam dynamics.
+- **Avoid:** *unclipped* LOMO/AdaLOMO (don't learn), AdaLOMO generally (LR-fragile),
+  and fp32 DeepSpeed offload (RAM OOM).
 
 ## Caveats
 - 50-step benchmark — short. Quality numbers are *comparative under a fixed budget*,
   not converged accuracy; absolute EM would rise with more steps. The cross-task
   *ranking* is the trustworthy part.
-- **LOMO/AdaLOMO ran without gradient clipping** (single fused pass, for speed);
-  their poor quality is partly this. A clipped re-run is the obvious follow-up
-  before writing LOMO off entirely.
+- The unclipped LOMO/AdaLOMO rows in Tables 1–2 use a single fused pass (no
+  clipping) — that's *why* they underperform. **Resolved:** the clipped re-run
+  (above) restores LOMO to 0.84 EM; use clipped LOMO @ lr ~5e-4 in practice.
+  AdaLOMO stays weak even clipped.
 - On-GPU 7B full FT trains **bf16 weights, no fp32 master** (29 GB master won't
   fit). **Scope:** affects only *full-finetuning the 7B* — **not** Text-to-LoRA,
   where the base is frozen and only the small hypernetwork/LoRA trains (full fp32
