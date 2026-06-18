@@ -1,6 +1,6 @@
 # Phase 0.5 — Sprint Plan: Full Fine-Tune of Mistral-7B on This Box (Feasibility Spike)
 
-*Sprint-planning material for the time-boxed Phase 0.5 feasibility spike. Pairs with [`./llm_optimizations.md`](./llm_optimizations.md) (the technique × VRAM/RAM/time reference table), [`../notes.md`](../notes.md) §C2 (Phase 0.5) and §B (memory-budget practical tips), and the lit-review entries `§2.x` in [`../summaries.md`](../summaries.md).*
+*Sprint-planning material for the Phase 0.5 feasibility spike (run unattended overnight — no fixed time-box; see "Run scope & failure fallback"). Pairs with [`./llm_optimizations.md`](./llm_optimizations.md) (the technique × VRAM/RAM/time reference table), [`../notes.md`](../notes.md) §C2 (Phase 0.5) and §B (memory-budget practical tips), and the lit-review entries `§2.x` in [`../summaries.md`](../summaries.md).*
 
 ---
 
@@ -158,7 +158,7 @@ Each sprint lists: **(1) Goal/objective · (2) Requirements (what needs to be ac
      - **Leave-one-out** — from the full stack (all levers on), toggle each lever **off alone** and measure the delta. (When a lever is load-bearing — removing it OOMs — that *is* the result: record `fits=no` and the OOM point as its contribution.)
    - For each cell, change **exactly one flag** vs. its anchor; run the fixed protocol through the same `benchmark()` harness; record the VRAM+RAM-vs-iteration trace + summary row, tagged with `{anchor, lever, direction}`.
    - Emit `results/phase05/lever_ablation.{csv,parquet}` with per-lever **ΔVRAM_gb, ΔRAM_gb, Δwallclock_per_step_s, Δtokens_per_s**, and a **freed-VRAM headroom** figure per lever.
-   - *Note the cost:* this is the sprint that most expands the overnight run (≈ 2 anchors × ~4 levers × 2 directions ≈ 12–16 extra short runs) — acceptable given the overnight window, but the first thing to trim if time-boxed (see scope-cut order).
+   - *Note the cost:* this is the sprint that most expands the overnight run (≈ 2 anchors × ~4 levers × 2 directions ≈ 12–16 extra short runs) — comfortably within the overnight window, so all cells run (no time-box; see "Run scope & failure fallback").
 3. **Definition of done:** the lever-ablation table is populated — every stackable lever has a measured isolated ΔVRAM / ΔRAM / Δspeed (or an explicit "load-bearing: removing it OOMs" / "n/a for this anchor" marking); a **recommended headroom config** is identified (the lever stack that leaves the most free VRAM at acceptable speed, for the hypernetwork to live in); results feed the Sprint 7 table/note.
 4. **Required testing:** assert each ablation cell differs from its anchor by **exactly one flag** (config diff check); sign/direction sanity (gradient checkpointing ↓VRAM but ↑step-time; 8-bit Adam ↓optimizer-state RAM/VRAM; drop-fp32 ↓VRAM slightly); deltas reconcile with the memory math (±tolerance); add-one-in and leave-one-out agree in sign for each lever (flag large disagreement as an interaction effect worth a note).
 
@@ -213,16 +213,17 @@ Each sprint lists: **(1) Goal/objective · (2) Requirements (what needs to be ac
 
 ---
 
-## Time-box & scope-cut order
+## Run scope & failure fallback (no fixed time-box)
 
-Phase 0.5 is a **time-boxed spike**, not an open-ended optimization project. If it runs over, cut *scope* in this order (cheapest signal preserved longest):
+**There is no time-box.** The full matrix is benchmarked unattended overnight, and the runs are short (fixed N steps, not training to convergence) — all 8 techniques + the ~12–16 ablation cells + the held-out evals total an estimated **~6–12 GPU-hours**, which fits comfortably in one overnight window. So we **run everything**; nothing is dropped for time.
 
-1. Drop **MeZO** (Sprint 5) — last-resort method; a documented "too slow/noisy to bother" is an acceptable row.
-2. Trim the **lever ablation** (Sprint 6) from both-directions to **leave-one-out only** on a **single anchor** (the offload one) — still yields each lever's marginal contribution, at half the runs. Drop the add-one-in sweep first.
-3. Drop **AdaLOMO** and **FSDP** as *second* data points (keep LOMO and ZeRO-Offload as the family representatives).
-4. Drop the **NVMe fallback** unless RAM actually pinched.
+What this section *does* govern is **resilience** — what happens if a single technique misbehaves, so one bad run never sinks the batch:
 
-**Never cut:** Sprint 1 (the protocol), Sprint 2 (the one working feasibility proof), a **minimal Sprint 6** (at least leave-one-out on the offload anchor — objective B is an explicit ask, headroom for the hypernetwork depends on it), and Sprint 7 (the tables + recommendation). Those are the minimum that answers both questions the spike exists for.
+- **Per-run isolation (already in the Sprint 1 pre-flight, item 5):** each technique/ablation run is wrapped so an OOM, hang, or crash logs `fits=no` + the failure and **moves on** to the next run. A hang gets a per-run wall-clock watchdog (e.g. kill a run exceeding a generous multiple of its expected step time) so MeZO's many forward passes or a stuck offload run can't consume the whole night.
+- **Order so the cheap, high-value runs finish first** (in case the night *is* cut short by something external — power, a driver crash): Sprint 2 offload baseline → VRAM-direct (Sprint 4) → ablation study (Sprint 6) → the long-tail (BAdam, MeZO, NVMe fallback). That way even a truncated night still yields the feasibility proof + the fastest-route data + the ablation study.
+- **Anything that didn't complete** is marked in the table as `not-run` (with the reason), never left silently blank — so a partial overnight result is still honest and re-runnable from its committed config.
+
+**Minimum that must be present for the phase to count as done** (everything else is bonus the overnight run should also produce): Sprint 1 (the protocol), Sprint 2 (the one working feasibility proof), Sprint 6 (the ablation study — objective B; the hypernetwork's headroom budget depends on it), and Sprint 7 (the tables + recommendation).
 
 ---
 
