@@ -13,12 +13,18 @@ torch 2.10+cu128, conda env `lora_lab`. Base: `Mistral-7B-Instruct-v0.2` (7.24 B
 
 ## Headline result (feasibility)
 
-**Yes — Mistral-7B can be full-parameter fine-tuned on this box, and the fast
-route keeps everything on the GPU.** The working recipe is **bf16 weights on the
-GPU + bitsandbytes paged 8-bit AdamW + gradient checkpointing**: ~27 GB VRAM,
-~1.7 s/step, negligible RAM. The classic CPU-offload route (DeepSpeed
-ZeRO-Offload) is *not* viable here because its fp32 optimizer state exceeds the
-RAM budget.
+**Yes — Mistral-7B can be full-parameter fine-tuned on this box, entirely on the
+GPU; the CPU-offload route is the only one that fails.** Every VRAM-direct
+technique fits in 32 GB and uses negligible system RAM (~2 GB). But **memory/speed
+alone is misleading — the held-out eval is what picks the winner:**
+- **Best memory-headroom + quality (for stacking a hypernetwork): BAdam + 8-bit
+  Adam — ~15.7 GB, ~0.80 EM, ~16 GB of VRAM free.**
+- **Best raw quality: Q-GaLore / GaLore (~0.83–0.88 EM)**, but ~28–30 GB and 2.7× slower.
+- **LOMO looks best on paper (14.6 GB, fast) but does NOT learn at the shared LR
+  (0.0 EM on the 3-class task)** — it's SGD-like and needs a different LR +
+  gradient clipping. The earlier "LOMO" recommendation is *withdrawn* on the eval.
+- The classic CPU-offload route (DeepSpeed ZeRO-Offload) is not viable: its fp32
+  optimizer state (~87 GB) exceeds available RAM.
 
 ---
 
@@ -68,65 +74,116 @@ not DeepSpeed offload. fp32 DeepSpeed offload is recorded as a real `fits=no`
 row. This also gives a clean ablation point: on the offload path, toggling the
 8-bit lever flips feasibility (fp32 → OOM, 8-bit → fits in 27 GB).
 
-## Fixed-protocol trade-off table (real SNI data)
+## Fixed-protocol trade-off tables (real SNI data, with held-out eval)
 
-Protocol: Mistral-7B, `task843_financial_phrasebank_classification`, seq 512,
-batch 1 × grad-accum 8, **50 opt-steps**, seed 42, grad-checkpointing on. All
-on-GPU techniques run with `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`.
-Source: `results/phase05/feasibility_table.csv`; plots in
-`results/phase05/plots/`.
+Protocol: Mistral-7B, seq 512, batch 1 × grad-accum 8, **50 opt-steps**, seed 42,
+lr 1e-5, grad-checkpointing on, `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`.
+**Held-out eval** = exact-match on each task's full test split (181 / 248 examples),
+generated greedily from the just-trained model. `s/micro-batch` is the
+apples-to-apples speed metric (LOMO/AdaLOMO fuse the update so 1 opt-step = 1
+micro-batch; the others accumulate 8). Sources:
+`results/phase05/feasibility_table.csv` (task843),
+`results/phase05/feasibility_table_task1344.csv`; plots in `results/phase05/plots/`.
 
-| Technique | Fits | Peak VRAM | Peak RAM | s/opt-step | **s/micro-batch** | Headroom (32−VRAM) | final loss |
+### Table 1 — task843 (financial sentiment, 3-class)
+
+| Technique | Fits | Peak VRAM | **Peak RAM** | s/micro-batch | VRAM headroom (32−peak) | **eval EM** | final loss |
 |---|---|---|---|---|---|---|---|
-| **LOMO** | ✅ | **14.60 GB** | 1.7 | 0.29¹ | **0.29** | **17.4 GB** | 0.61 |
-| AdaLOMO | ✅ | 15.10 GB | 1.8 | 0.60¹ | 0.60 | 16.9 GB | 1.93² |
-| BAdam | ✅ | 17.60 GB | 1.9 | 1.03 | **0.13** | 14.4 GB | 0.57 |
-| Q-GaLore | ✅ | 28.59 GB | 1.9 | 6.03 | 0.75 | 3.4 GB | 0.35 |
-| baseline (paged 8-bit) | ✅ | 27.64 GB | 1.9 | 2.26 | 0.28 | 4.4 GB | 0.44 |
-| GaLore | ✅ | 30.41 GB | 1.9 | 6.03 | 0.75 | 1.6 GB | 0.44 |
-| fp32 ZeRO-Offload | ❌ | — | ~95 GB | — | — | — | — |
+| **Q-GaLore** | ✅ | 28.59 GB | 1.9 GB | 0.75 | 3.4 GB | **0.878** | 0.35 |
+| **GaLore** | ✅ | 30.41 GB | 1.9 GB | 0.75 | 1.6 GB | 0.867 | 0.42 |
+| **BAdam** | ✅ | 17.60 GB | 1.9 GB | **0.13** | 14.4 GB | 0.856 | 0.25 |
+| baseline (paged 8-bit) | ✅ | 27.64 GB | 1.9 GB | 0.28 | 4.4 GB | 0.608 | 0.49 |
+| AdaLOMO | ✅ | 15.10 GB | 1.8 GB | 0.60 | 16.9 GB | 0.453 | 1.92 |
+| LOMO | ✅ | **14.60 GB** | 1.7 GB | 0.29 | **17.4 GB** | **0.000** | 3.77 |
+| fp32 ZeRO-Offload | ❌ | — | ~95 GB (OOM) | — | — | — | — |
 
-¹ LOMO/AdaLOMO fuse the update into backward (no grad accumulation), so one
-"opt-step" = **1** micro-batch; the others accumulate **8**. The **s/micro-batch**
-column is the apples-to-apples speed metric. ² AdaLOMO's high loss is an LR
-mismatch at the shared 1e-5 (its adaptive scaling wants a different LR), not an
-instability — flagged for a per-technique LR if it's used for real.
+### Table 2 — task1344 (RTE entailment, binary — the harder task)
 
-### What the numbers say
-- **Feasibility: every VRAM-direct technique fits; the offload route does not.**
-  The plan expected offload to be the easy path; on this box it's the *only*
-  family that fails (fp32 CPU-Adam state > RAM).
-- **Memory:** LOMO/AdaLOMO are far the lightest (~15 GB — half the GPU free),
-  then BAdam (17.6), then the 8-bit/GaLore family (~28–30 GB, near the ceiling).
-- **Speed (per micro-batch, the fair metric):** BAdam fastest (0.13 s — only one
-  block's optimizer is live), baseline and **LOMO tie at ~0.28 s** (LOMO's win is
-  *memory*, not speed), AdaLOMO ~2×, **GaLore/Q-GaLore ~2.7× slower** (the
-  per-step low-rank projection + periodic SVD is real overhead).
+| Technique | Fits | Peak VRAM | **Peak RAM** | s/micro-batch | VRAM headroom | **eval EM** | final loss |
+|---|---|---|---|---|---|---|---|
+| **GaLore** | ✅ | 30.43 GB | 2.0 GB | 0.78 | 1.6 GB | **0.835** | 0.15 |
+| **Q-GaLore** | ✅ | 28.57 GB | 1.9 GB | 0.78 | 3.4 GB | 0.831 | 0.09 |
+| **BAdam** | ✅ | 17.61 GB | 1.9 GB | 0.15 | 14.4 GB | 0.746 | 0.20 |
+| LOMO | ✅ | 14.65 GB | 1.7 GB | 0.32 | 17.4 GB | 0.589 | 0.33 |
+| baseline (paged 8-bit) | ✅ | 27.65 GB | 1.9 GB | 0.31 | 4.4 GB | 0.528 | 0.23 |
+| AdaLOMO | ✅ | 15.15 GB | 1.8 GB | 0.62 | 16.9 GB | 0.431 | 5.25 |
 
-## Recommendation (fastest viable route + hypernetwork headroom)
-- **For Phase 2 (hypernetwork on top of the 7B): LOMO.** ~14.6 GB leaves **~17 GB
-  of VRAM headroom** for the hypernetwork + its activations, at baseline-level
-  per-token speed. BAdam (17.6 GB, fastest/token) is the runner-up.
-- **Simplest robust choice if headroom isn't the constraint: paged 8-bit AdamW**
-  (the baseline) — standard Adam dynamics, 27.6 GB, no projection/cycling quirks.
-- **Avoid:** GaLore/Q-GaLore here — they're both the tightest on VRAM *and* the
-  slowest, the worst corner of the trade-off; and fp32 DeepSpeed offload (OOM).
+### What the numbers say (and how the two tasks agree)
+- **Feasibility:** every VRAM-direct technique fits; the offload route is the only
+  family that fails (fp32 CPU-Adam state > RAM — see the breakdown above).
+- **Peak RAM is trivial for every on-GPU method (~1.7–2.0 GB).** That's just
+  Python + the data/model-load working set — these techniques **don't touch the
+  96 GB pool at all** (states live on the GPU). System RAM is a non-constraint
+  here; it only mattered for the offload route, which needed ~95 GB and OOMed.
+- **Quality leaders are consistent across both tasks: Q-GaLore / GaLore / BAdam
+  (0.83–0.88 EM).** baseline (paged 8-bit) is mid (0.53–0.61). **LOMO and AdaLOMO
+  underperform** — and that only shows up in *eval*, not in memory/speed.
+- **The LOMO trap:** memory/speed alone rank LOMO #1 (14.6 GB, fast). But it
+  scored **0.000** on the 3-class task and only ~chance (0.589) on the binary
+  task. LOMO is SGD-like, so the shared **lr 1e-5 (an Adam LR) is far too small**
+  for it — it barely updates. This is the single most important reason the spike
+  ran evals: the memory/speed table would have recommended a technique that
+  doesn't learn. The combinations study below tried to rescue it with an LR sweep.
+- **Speed (per micro-batch):** BAdam fastest (0.13 s — only one block's optimizer
+  is live), baseline ~0.28 s, GaLore/Q-GaLore ~2.7× slower (per-step low-rank
+  projection + periodic SVD).
+
+## Method combinations — how these stack (`results/phase05/combinations.csv`)
+
+Can we combine the levers/techniques to get *both* memory headroom and quality?
+All on task843, same protocol.
+
+| Combination | Peak VRAM | Peak RAM | s/micro | eval EM | What it tells us |
+|---|---|---|---|---|---|
+| **BAdam + 8-bit base optimizer** | **15.68 GB** | 1.9 GB | 0.13 | **0.801** | ★ memory tricks *stack*: BAdam (one live block) + 8-bit shrinks it 17.6→15.7 GB while keeping ~0.80 quality |
+| GaLore rank 64 (vs 128) | 29.88 GB | 2.0 GB | 0.75 | 0.873 | rank is a near-free knob — half the projection state, same quality |
+| LOMO lr 1e-4 | 14.60 GB | 1.7 GB | 0.29 | 0.331 | higher LR → only chance (0.33 = 1/3) |
+| LOMO lr 5e-4 | 14.60 GB | 1.7 GB | 0.29 | 0.000 | diverged |
+| LOMO lr 1e-3 | 14.60 GB | 1.7 GB | 0.29 | 0.000 | diverged |
+| LOMO bs8 / no-ckpt (lr 5e-4) | 15.7 / 16.7 GB | 1.8 GB | — | 0.331 | headroom *can* buy batch/▼ckpt, but quality still chance |
+| AdaLOMO lr 1e-3 | 15.10 GB | 1.8 GB | 0.60 | 0.331 | chance |
+
+**How to combine — the practical guidance:**
+1. **Memory tricks stack cleanly.** BAdam (block-coordinate) + 8-bit base optimizer
+   compose: **15.7 GB at 0.80 EM** — i.e. *LOMO-class memory headroom (~16 GB free)
+   with actual quality*. This is the combination to use when you need both room
+   for a hypernetwork **and** a model that learns. Gradient checkpointing stacks
+   on top of all of these (it's independent — see the ablation study).
+2. **GaLore's rank is a free dial.** rank 64 ≈ rank 128 quality at less projection
+   memory; drop it if you want a bit more headroom from the GaLore family.
+3. **LOMO does not combine its way to quality in this budget.** No LR in
+   {1e-5, 1e-4, 5e-4, 1e-3} clears chance on task843: too small → undertrained
+   (0.33), too large → divergence (0.00). LOMO needs **gradient clipping** (its
+   paper's two-pass `grad_norm`+`fused_backward`, which we disabled for speed)
+   and/or many more steps. Spending its headroom on batch size / dropping
+   checkpointing doesn't help until the optimizer itself is stabilized. Treat
+   LOMO's memory win as *unrealized* until clipping is added (a follow-up).
+
+## Recommendation (corrected by the eval results)
+- **Best memory headroom *with* quality → BAdam + 8-bit Adam (~15.7 GB, ~0.80 EM,
+  ~16 GB free).** This is the route to stack a hypernetwork on (Phase 2): it
+  leaves roughly half the GPU free and actually learns. *(The earlier
+  memory-only pick, LOMO, is withdrawn — it doesn't learn at this LR.)*
+- **Best raw quality → Q-GaLore or GaLore (0.83–0.88 EM)**, but at ~28–30 GB they
+  leave little headroom and are ~2.7× slower; pick these if quality is paramount
+  and you don't need room on the GPU for anything else.
+- **Simplest / most standard → paged 8-bit AdamW baseline** (27.6 GB), but its
+  quality is mid (0.53–0.61) at 50 steps.
+- **Avoid:** plain LOMO/AdaLOMO at the shared LR (don't learn), and fp32 DeepSpeed
+  offload (OOM).
 
 ## Caveats
-- 50-step benchmark measures **memory + speed**, not convergence. `final_train_loss`
-  is a learning signal, not a quality verdict. **Full held-out eval quality is the
-  one remaining Sprint 7 item** (the runs use `save_checkpoint=False` to protect
-  disk — eval needs an inline-eval pass or a targeted re-run of the chosen route).
-- On-GPU 7B full FT trains **bf16 weights without an fp32 master copy** (a 29 GB
-  master doesn't fit) — a known precision caveat for all rows. **Scope:** this
-  applies only to *full-finetuning the 7B*. It does **not** affect the project's
-  Text-to-LoRA workflow (§1.1), where the 7B base is *frozen* and only the small
-  hypernetwork/LoRA is trained — those keep full fp32 Adam easily, and the
-  caveat never bites. It would only matter if a later phase full-finetunes the
-  base itself (e.g. an oracle baseline); the eval-quality column below measures
-  how much it actually costs. LOMO/GaLore are designed for bf16 full-FT, so the
-  hit is typically small.
-- **BAdam** covers ~10 blocks in 50 steps (switch_every=5); full coverage of all
-  32 blocks needs a longer run. Memory/speed profile is representative.
-- **MeZO** and **FSDP CPU-offload** are not yet run (MeZO needs a custom
-  zeroth-order loop; FSDP fp32 offload would OOM RAM like DeepSpeed).
+- 50-step benchmark — short. Quality numbers are *comparative under a fixed budget*,
+  not converged accuracy; absolute EM would rise with more steps. The cross-task
+  *ranking* is the trustworthy part.
+- **LOMO/AdaLOMO ran without gradient clipping** (single fused pass, for speed);
+  their poor quality is partly this. A clipped re-run is the obvious follow-up
+  before writing LOMO off entirely.
+- On-GPU 7B full FT trains **bf16 weights, no fp32 master** (29 GB master won't
+  fit). **Scope:** affects only *full-finetuning the 7B* — **not** Text-to-LoRA,
+  where the base is frozen and only the small hypernetwork/LoRA trains (full fp32
+  there). See the dedicated note above.
+- **BAdam** covers ~10 of 32 blocks in 50 steps (switch_every=5); full coverage
+  needs a longer run. Memory/speed/quality profile is representative.
+- **MeZO** and **FSDP CPU-offload** not run (MeZO needs a custom zeroth-order
+  loop; FSDP fp32 offload would OOM RAM like DeepSpeed).
