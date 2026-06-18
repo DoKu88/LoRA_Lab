@@ -17,6 +17,22 @@ import yaml
 
 VALID_METHODS = ("full_ft", "lora", "qlora")
 
+# Phase 0.5 full-FT techniques (the trade-off-table rows). All are full-parameter
+# fine-tunes of Mistral-7B; they differ in how optimizer/grad state is kept small
+# enough to fit (on-GPU shrink vs. CPU offload). See docs/phase-0.5-sprint-plan.md.
+VALID_TECHNIQUES = (
+    "baseline",       # plain full-FT (fits only on small models; harness validation)
+    "zero_offload",   # DeepSpeed ZeRO-2/3 + CPU optimizer offload (Sprint 2)
+    "fsdp_offload",   # FSDP full-shard + CPU offload (Sprint 3)
+    "galore",         # GaLore low-rank gradient projection (Sprint 4)
+    "qgalore",        # Q-GaLore = GaLore + quantization (Sprint 4)
+    "lomo",           # LOMO fused backward+update (Sprint 4)
+    "adalomo",        # AdaLOMO (Sprint 4)
+    "badam",          # BAdam block-coordinate (Sprint 5)
+    "mezo",           # MeZO zeroth-order, forward-only (Sprint 5)
+    "zero_infinity",  # ZeRO-Infinity NVMe offload — fallback only (Sprint 5)
+)
+
 
 @dataclass
 class LoraParams:
@@ -50,6 +66,52 @@ class FullFtParams:
 
     use_8bit_adam: bool = True
     gradient_checkpointing: bool = False
+
+
+@dataclass
+class TechniqueParams:
+    """Phase 0.5 technique selector + per-technique knobs.
+
+    ``name`` picks the training strategy (see VALID_TECHNIQUES). The rest are
+    technique-specific and ignored by strategies that don't use them, so one
+    schema covers every row of the trade-off table.
+    """
+
+    name: str = "baseline"
+    # --- GaLore / Q-GaLore ---
+    galore_rank: int = 128
+    galore_update_proj_gap: int = 200
+    galore_scale: float = 0.25
+    galore_proj_type: str = "std"
+    # --- BAdam ---
+    badam_switch_every: int = 100  # optimizer steps per block before switching
+    badam_switch_mode: str = "ascending"
+    # --- LOMO / AdaLOMO ---
+    lomo_clip_grad_norm: float = 0.0  # >0 enables LOMO's two-pass grad clipping
+    # --- MeZO ---
+    mezo_eps: float = 1e-3
+    mezo_lr: float = 1e-6
+    # --- offload (ZeRO / FSDP / NVMe) ---
+    zero_stage: int = 2
+    nvme_path: str | None = None  # ZeRO-Infinity only
+
+
+@dataclass
+class LeverParams:
+    """Stackable memory optimizations, toggled individually for the Sprint 6
+    ablation study. Each is measured in isolation (one flag changed vs. an
+    anchor) so we know its standalone VRAM/RAM/speed contribution.
+
+    Note: ``use_8bit_adam`` and ``gradient_checkpointing`` also live on
+    FullFtParams (Phase 0 used them there); for Phase 0.5 the ablation toggles
+    them here so the lever set is self-contained and one config diff = one flag.
+    """
+
+    use_8bit_adam: bool = False
+    gradient_checkpointing: bool = False
+    activation_offload: bool = False  # push activations to CPU
+    drop_fp32_master: bool = False    # train without the fp32 weight shadow
+    optimizer_offload: bool = True    # the offload itself (offload techniques)
 
 
 @dataclass
@@ -98,6 +160,11 @@ class RunConfig:
     lora: LoraParams = field(default_factory=LoraParams)
     quant: QuantParams = field(default_factory=QuantParams)
     full_ft: FullFtParams = field(default_factory=FullFtParams)
+    # Phase 0.5 only: technique selects the full-FT strategy; levers are the
+    # stackable optimizations the ablation study toggles. Both default to the
+    # no-op baseline so Phase 0 configs are unaffected.
+    technique: TechniqueParams = field(default_factory=TechniqueParams)
+    levers: LeverParams = field(default_factory=LeverParams)
     logging: LoggingParams = field(default_factory=LoggingParams)
     eval: EvalParams = field(default_factory=EvalParams)
 
@@ -111,6 +178,11 @@ class RunConfig:
             raise ValueError(
                 f"wandb_mode must be online|offline|disabled, "
                 f"got {self.logging.wandb_mode!r}"
+            )
+        if self.technique.name not in VALID_TECHNIQUES:
+            raise ValueError(
+                f"technique.name must be one of {VALID_TECHNIQUES}, "
+                f"got {self.technique.name!r}"
             )
 
     @property

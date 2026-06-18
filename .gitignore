@@ -27,3 +27,7 @@ wandb/
 # HF / model caches if they ever land in-tree
 .cache/
 hf_cache/
+
+# Phase 0.5 intermediates (regenerable); the feasibility_table.* and plots/ ARE committed
+results/phase05/runs/
+results/phase05/mem_trace/

@@ -2,11 +2,16 @@
 
 from pathlib import Path
 
+import pytest
+
 from lora_lab.utils.vram import (
+    HostRamTracer,
     MemoryTracer,
     bytes_to_gb,
     cuda_mem_snapshot,
+    host_ram_available,
     phase_memory,
+    process_ram_bytes,
 )
 
 
@@ -57,3 +62,60 @@ def test_tracer_save_csv(tmp_path: Path):
     assert lines[0] == "step,gpu_mem_gb,gpu_mem_reserved_gb"
     assert lines[1].startswith("0,0.5")
     assert len(lines) == 3
+
+
+# --- Host-RAM probe (Sprint 1) ----------------------------------------------
+
+
+def test_process_ram_nonneg():
+    b = process_ram_bytes()
+    assert b >= 0
+    if host_ram_available():
+        # a live python process resident set is comfortably over 1 MB
+        assert b > 1024**2
+
+
+def test_host_ram_tracer_records_and_trace():
+    ram = HostRamTracer(interval_s=0.02).start()
+    try:
+        for step in range(3):
+            ram.record(step)
+    finally:
+        ram.stop()
+    assert len(ram) == 3
+    assert ram.steps == [0, 1, 2]
+    assert ram.peak_ram_gb >= 0.0
+    assert ram.peak_ram_delta_gb >= 0.0
+
+
+def test_host_ram_tracer_save_csv(tmp_path: Path):
+    ram = HostRamTracer()
+    ram.steps = [0, 5]
+    ram.ram_gb = [1.25, 1.5]
+    out = ram.save_csv(tmp_path / "ram.csv")
+    lines = out.read_text().strip().splitlines()
+    assert lines[0] == "step,ram_gb"
+    assert lines[1].startswith("0,1.25")
+    assert len(lines) == 3
+
+
+@pytest.mark.skipif(not host_ram_available(), reason="psutil required")
+def test_host_ram_probe_detects_known_allocation():
+    """Allocate ~50 MB and confirm the probe's peak rises by roughly that much.
+
+    This is the Sprint 1 'RAM probe validated against a known allocation' test:
+    we don't demand exactness (the allocator/GC add slop), only that a real
+    multi-MB allocation is clearly reflected in the peak.
+    """
+    ram = HostRamTracer(interval_s=0.01).start()
+    blob = None
+    try:
+        # bytearray is a single contiguous resident allocation (not lazy)
+        blob = bytearray(50 * 1024 * 1024)
+        blob[:: 4096] = b"\x01" * len(blob[:: 4096])  # touch pages so they're resident
+        for step in range(3):
+            ram.record(step)
+    finally:
+        ram.stop()
+    assert ram.peak_ram_delta_gb >= bytes_to_gb(30 * 1024 * 1024)  # >= ~30 MB of the 50
+    assert blob is not None and len(blob) == 50 * 1024 * 1024

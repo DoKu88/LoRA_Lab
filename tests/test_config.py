@@ -46,3 +46,46 @@ def test_nested_from_dict_types():
     assert c.hparams.batch_size == 2
     # untouched nested fields keep their defaults
     assert c.lora.r == 8
+
+
+# --- Phase 0.5 technique + levers (Sprint 1) --------------------------------
+
+
+def test_technique_defaults_to_baseline():
+    c = RunConfig()
+    assert c.technique.name == "baseline"
+    assert c.levers.optimizer_offload is True
+    assert c.levers.gradient_checkpointing is False
+
+
+def test_technique_override_and_knobs():
+    c = RunConfig.from_dict(
+        {"technique": {"name": "galore", "galore_rank": 256}}
+    )
+    assert c.technique.name == "galore"
+    assert c.technique.galore_rank == 256
+
+
+def test_invalid_technique_raises():
+    with pytest.raises(ValueError):
+        RunConfig.from_dict({"technique": {"name": "nonsense"}})
+
+
+def test_levers_round_trip(tmp_path):
+    c = RunConfig.from_dict(
+        {"technique": {"name": "zero_offload"},
+         "levers": {"use_8bit_adam": True, "gradient_checkpointing": True}}
+    )
+    p = c.save(tmp_path / "p05.yaml")
+    c2 = RunConfig.load(p)
+    assert c2.to_dict() == c.to_dict()
+    assert c2.levers.use_8bit_adam is True
+
+
+def test_fixed_protocol_file_loads():
+    """The committed Phase 0.5 fixed protocol parses and targets Mistral-7B."""
+    c = RunConfig.load("configs/phase05/_fixed_protocol.yaml")
+    assert c.method == "full_ft"
+    assert "Mistral-7B" in c.base_model
+    assert c.technique.name == "baseline"  # overridden per run
+    assert c.hparams.max_steps == 50

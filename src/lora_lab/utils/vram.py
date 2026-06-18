@@ -16,6 +16,8 @@ and unit tests work on a CPU-only box.
 from __future__ import annotations
 
 import csv
+import threading
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,6 +29,13 @@ try:  # torch is optional at import time (dry-run / CPU CI)
     _HAS_TORCH = True
 except Exception:  # pragma: no cover - torch always present in the real env
     _HAS_TORCH = False
+
+try:  # psutil is optional (CPU CI); host-RAM probe degrades to 0.0 without it
+    import psutil
+
+    _HAS_PSUTIL = True
+except Exception:  # pragma: no cover - psutil present in the real env
+    _HAS_PSUTIL = False
 
 
 _BYTES_PER_GB = 1024**3
@@ -155,4 +164,143 @@ class MemoryTracer:
             writer.writerow(["step", "gpu_mem_gb", "gpu_mem_reserved_gb"])
             for s, a, r in zip(self.steps, self.allocated_gb, self.reserved_gb):
                 writer.writerow([s, f"{a:.6f}", f"{r:.6f}"])
+        return path
+
+
+def process_ram_bytes(include_children: bool = True) -> int:
+    """Resident set size (RSS) of this process (+ children), in bytes.
+
+    Children matter for Phase 0.5: DeepSpeed/FSDP CPU-offload and dataloader
+    workers run the offloaded optimizer state and pinned buffers in child
+    processes, so the parent's RSS alone undercounts the host-RAM footprint we
+    are trying to measure. Returns 0 when psutil is unavailable (CPU CI).
+    """
+    if not _HAS_PSUTIL:
+        return 0
+    proc = psutil.Process()
+    total = proc.memory_info().rss
+    if include_children:
+        for child in proc.children(recursive=True):
+            try:
+                total += child.memory_info().rss
+            except (psutil.NoSuchProcess, psutil.AccessDenied):  # pragma: no cover
+                continue
+    return total
+
+
+def host_ram_available() -> bool:
+    return _HAS_PSUTIL
+
+
+@dataclass
+class HostRamTracer:
+    """Sample host (system) RAM and capture its peak across a run.
+
+    Phase 0.5's whole premise is that 96 GB system RAM is what makes 7B full FT
+    feasible via CPU offload — so peak *RAM* is a first-class measurement
+    alongside peak VRAM. Unlike the GPU peak (which CUDA tracks for us between
+    samples), host RSS has no built-in high-water mark, so a **background
+    sampler thread** polls it every ``interval_s`` to catch the spikes that land
+    *between* logged training steps (e.g. the offloaded optimizer step on CPU).
+
+    Usage::
+
+        ram = HostRamTracer().start()
+        ...train...
+        ram.record(step)        # step-aligned point for the plot
+        ...
+        ram.stop()
+        print(ram.peak_ram_gb)  # true high-water mark, incl. between-step spikes
+
+    Degrades to all-zeros (never raises) when psutil is absent so the harness,
+    dry-run and CPU tests still work.
+    """
+
+    interval_s: float = 0.5
+    include_children: bool = True
+    # step-aligned trace (for the RAM-vs-iteration plot)
+    steps: list[int] = field(default_factory=list)
+    ram_gb: list[float] = field(default_factory=list)
+    # continuous high-water mark from the background thread
+    _peak_bytes: int = 0
+    _baseline_bytes: int = 0
+    _thread: threading.Thread | None = field(default=None, repr=False)
+    _stop_evt: threading.Event | None = field(default=None, repr=False)
+
+    def _sample_bytes(self) -> int:
+        return process_ram_bytes(self.include_children)
+
+    def _run(self) -> None:  # pragma: no cover - timing-dependent thread body
+        assert self._stop_evt is not None
+        while not self._stop_evt.is_set():
+            self._peak_bytes = max(self._peak_bytes, self._sample_bytes())
+            self._stop_evt.wait(self.interval_s)
+
+    def start(self) -> "HostRamTracer":
+        """Snapshot the baseline RSS and launch the background sampler."""
+        now = self._sample_bytes()
+        self._baseline_bytes = now
+        self._peak_bytes = now
+        if _HAS_PSUTIL:
+            self._stop_evt = threading.Event()
+            self._thread = threading.Thread(
+                target=self._run, name="host-ram-sampler", daemon=True
+            )
+            self._thread.start()
+        return self
+
+    def record(self, step: int) -> float:
+        """Append a step-aligned RAM sample (GiB) to the trace; returns it.
+
+        Also folds the reading into the running peak so the high-water mark is
+        correct even if the background thread is disabled.
+        """
+        b = self._sample_bytes()
+        self._peak_bytes = max(self._peak_bytes, b)
+        gb = bytes_to_gb(b)
+        self.steps.append(int(step))
+        self.ram_gb.append(gb)
+        return gb
+
+    def stop(self) -> "HostRamTracer":
+        if self._stop_evt is not None:
+            self._stop_evt.set()
+        if self._thread is not None:
+            self._thread.join(timeout=self.interval_s * 4)
+            self._thread = None
+        return self
+
+    @property
+    def peak_ram_gb(self) -> float:
+        """Peak total RSS (GiB) seen over the run (0.0 without psutil)."""
+        return bytes_to_gb(self._peak_bytes)
+
+    @property
+    def baseline_ram_gb(self) -> float:
+        """RSS (GiB) at ``start()`` — subtract for the run's *marginal* RAM."""
+        return bytes_to_gb(self._baseline_bytes)
+
+    @property
+    def peak_ram_delta_gb(self) -> float:
+        """Peak RAM above the start baseline — the run's own RAM footprint."""
+        return bytes_to_gb(max(0, self._peak_bytes - self._baseline_bytes))
+
+    def __len__(self) -> int:
+        return len(self.steps)
+
+    def __enter__(self) -> "HostRamTracer":
+        return self.start()
+
+    def __exit__(self, *exc) -> None:
+        self.stop()
+
+    def save_csv(self, path: str | Path) -> Path:
+        """Persist the step-aligned trace as ``step,ram_gb``."""
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["step", "ram_gb"])
+            for s, r in zip(self.steps, self.ram_gb):
+                writer.writerow([s, f"{r:.6f}"])
         return path

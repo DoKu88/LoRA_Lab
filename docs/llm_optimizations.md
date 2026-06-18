@@ -1,6 +1,6 @@
 # Phase 0.5 — Full-FT Memory Optimizations: VRAM / RAM / Time Trade-offs
 
-*Reference table for the Phase 0.5 feasibility spike — "can we full-finetune Mistral-7B on this box?" Pairs with [`../notes.md`](../notes.md) §C2 (Phase 0.5) and §B (practical tips). Section refs (§2.x) point at the lit-review entries in `../summaries.md`.*
+*Reference table for the Phase 0.5 feasibility spike — "can we full-finetune Mistral-7B on this box?" The **execution plan that fills in this table** is [`./phase-0.5-sprint-plan.md`](./phase-0.5-sprint-plan.md). Pairs with [`../notes.md`](../notes.md) §C2 (Phase 0.5) and §B (practical tips). Section refs (§2.x) point at the lit-review entries in `../summaries.md`.*
 
 ---
 
@@ -45,16 +45,26 @@ The job below is to either keep state on-GPU (route 2) **or** spill it cleanly t
 
 ## Results to fill in (per technique)
 
-Measure with `torch.cuda.max_memory_allocated()` per phase (§B), on Mistral-7B-Instruct-v0.2, fixed batch/seq-len/seed.
+> Populated by **Sprint 6** of [`./phase-0.5-sprint-plan.md`](./phase-0.5-sprint-plan.md); the raw rows + plots land in `results/phase05/`.
 
-| Technique | Config / flags | Fits (≤32 GB VRAM / ≤96 GB RAM)? | Measured peak VRAM | Peak system RAM | Wall-clock / step | Quality (eval) | Notes |
+Measured on Mistral-7B-Instruct-v0.2, seq 512, batch 1 × grad-accum 8, 50 steps,
+seed 42, grad-checkpointing on, `expandable_segments:True`. Full writeup:
+[`./phase-0.5-findings.md`](./phase-0.5-findings.md). Speed is **s/micro-batch**
+(the apples-to-apples metric — LOMO/AdaLOMO update per micro-batch, others
+accumulate 8). **Quality = held-out exact-match** on task843 / task1344.
+
+| Technique | Config / flags | Fits (≤32 GB VRAM / ≤96 GB RAM)? | Measured peak VRAM | Peak system RAM | Wall-clock / micro-batch | Quality (EM: t843 / t1344) | Notes |
 |---|---|---|---|---|---|---|---|
-| ZeRO-Offload + 8-bit Adam | | | | | | | baseline "just works" route |
-| FSDP CPU-offload | | | | | | | |
-| GaLore | | | | | | | |
-| Q-GaLore | | | | | | | |
-| LOMO | | | | | | | |
-| AdaLOMO | | | | | | | |
-| BAdam | | | | | | | |
-| MeZO | | | | | | | |
-| ZeRO-Infinity (NVMe) | | | | | | | fallback only |
+| **Q-GaLore** | GaLoreAdamW8bit, rank 128 | ✅ / ✅ | 28.59 GB | 1.9 GB | 0.75 s | **0.88 / 0.83** | best quality; ~28 GB so little headroom |
+| **GaLore** | rank 128, gap 200 | ✅ / ✅ | 30.41 GB | 1.9 GB | 0.75 s | 0.87 / 0.84 | tightest VRAM + slowest (SVD/projection) |
+| **BAdam** | BlockOptimizer, switch 5 | ✅ / ✅ | 17.60 GB | 1.9 GB | **0.13 s** | 0.86 / 0.75 | ★ quality *and* headroom; +8-bit → 15.7 GB |
+| paged 8-bit AdamW (baseline) | bf16 + PagedAdamW8bit + grad-ckpt | ✅ / ✅ | 27.64 GB | 1.9 GB | 0.28 s | 0.61 / 0.53 | simplest; mid quality; 8-bit Adam load-bearing |
+| AdaLOMO | fused, adaptive | ✅ / ✅ | 15.10 GB | 1.8 GB | 0.60 s | 0.45 / 0.43 | LR-sensitive; weak at shared 1e-5 |
+| **LOMO + clip** @ lr 5e-4 | fused, two-pass grad-clip | ✅ / ✅ | **14.60 GB** | 1.8 GB | 0.47 s | **0.84** (t843) | ★ lightest VRAM (~17 GB free) at top-tier quality — the headroom pick |
+| LOMO (no clip) @ lr 1e-5 | fused backward, no clip | ✅ / ✅ | 14.60 GB | 1.7 GB | 0.29 s | 0.00 / 0.59 | does NOT learn at the Adam-scale LR; needs clip + lr ~5e-4 |
+| **FSDP CPU-offload** | params→CPU, fp32 AdamW, bf16 | ✅ / ✅ | 27.50 GB | **62.5 GB** | ~9–13 s | learns (loss↓) | offload FITS (no fp32 master) but **~45× slower** — fallback, not default |
+| ZeRO-Offload + fp32 Adam | DeepSpeed ZeRO-2, CPU optimizer offload | ❌ (RAM) / ❌ | — | ~95 GB (OOM) | — | — | fp32 CPUAdam +master ~87 GB > avail RAM; no 8-bit CPU optimizer |
+| MeZO | zeroth-order, forward-only | ✅ / ✅ | **13.77 GB** | 5.2 GB | 0.22 s | 0.00 (500 steps too) | lowest VRAM (no grads/optimizer) but needs thousands of steps |
+| ZeRO-Infinity (NVMe) | — | not run | | | | | unnecessary — FSDP shows offload fits in RAM |
+
+**Combinations** (task843): **LOMO + gradient clipping @ lr 5e-4 → 14.6 GB at 0.84 EM** (the headroom winner — clipping fixes the divergence, `clipped_lomo.csv`); **BAdam + 8-bit → 15.7 GB at 0.80 EM** (memory tricks stack); GaLore rank 64 ≈ rank 128 quality at less state (`combinations.csv`). AdaLOMO stays weak even clipped. See [`./phase-0.5-findings.md`](./phase-0.5-findings.md) for the full analysis.
