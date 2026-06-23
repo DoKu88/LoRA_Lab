@@ -1,6 +1,3 @@
-# Large binary source PDFs — keep out of git history
-pdfs/
-
 # Local Claude Code / agent tooling config
 .claude/
 
