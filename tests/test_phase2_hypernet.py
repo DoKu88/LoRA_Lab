@@ -346,3 +346,41 @@ def test_meta_train_sft_runs_and_trains_generator():
     assert any(not torch.allclose(b, a) for b, a in zip(before, after))
     # base stayed frozen
     assert all(p.grad is None for p in lm.parameters())
+
+
+# ---- Sprint 3/4: real samplers (parse + leakage filter, no network) -------
+def test_parse_lora_state_dict_maps_to_base_keys():
+    from lora_lab.hypernet.samplers import parse_lora_state_dict
+    r, in_f, out_f = 16, 4096, 1024
+    base = "model.layers.3.self_attn.v_proj"
+    sd = {
+        f"base_model.model.{base}.lora_A.weight": torch.randn(r, in_f),
+        f"base_model.model.{base}.lora_B.weight": torch.randn(out_f, r),
+        # an unrelated key should be ignored
+        "base_model.model.model.embed_tokens.weight": torch.randn(8, 8),
+    }
+    parsed = parse_lora_state_dict(sd)
+    assert set(parsed) == {base}
+    a, b = parsed[base]
+    assert a.shape == (r, in_f) and b.shape == (out_f, r)
+
+
+def test_recon_sampler_train_only(tmp_path):
+    """Sampler covers only train-split tasks (held-out never enters)."""
+    import yaml
+    from lora_lab.hypernet.samplers import LibraryReconSampler
+    split = tmp_path / "split.yaml"
+    split.write_text(yaml.safe_dump({
+        "train": {"taskA": "taskA_x", "taskB": "taskB_y"},
+        "held_out": {"taskC": "taskC_z"},
+    }))
+    lib = tmp_path / "lib.yaml"
+    lib.write_text(yaml.safe_dump({"tasks": {
+        "taskA": {"adapter_repo": "R/A", "description": "do A"},
+        "taskB": {"adapter_repo": "R/B", "description": "do B"},
+        "taskC": {"adapter_repo": "R/C", "description": "do C"},  # held-out
+    }}))
+    s = LibraryReconSampler(split, lib, seed=0)
+    assert set(s.tasks) == {"taskA", "taskB"}        # train only
+    assert "taskC" not in s.tasks                     # held-out excluded
+    assert len(s) == 2
