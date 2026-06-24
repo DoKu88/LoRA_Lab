@@ -5,10 +5,12 @@ shape contract, no-op-adapter-leaves-logits-unchanged, grads reach the
 hypernetwork, conditioning wiring, and a reconstruction overfit step.
 """
 
+import pytest
 import torch
 import torch.nn as nn
 
 from lora_lab.hypernet.apply import LoRARegistry, lora_injected, target_specs
+from lora_lab.hypernet.heads import HEADS, estimate_params
 from lora_lab.hypernet.model import HyperLoRA, delta_w
 from lora_lab.hypernet.recon import reconstruction_loss
 
@@ -122,3 +124,29 @@ def test_reconstruction_overfit_decreases():
         opt.step()
         losses.append(loss.item())
     assert losses[-1] < 0.5 * losses[0], f"recon loss did not drop: {losses[0]:.3f}->{losses[-1]:.3f}"
+
+
+# ---- Sprint 2: output-parameterization heads ------------------------------
+@pytest.mark.parametrize("name", ["full", "lowrank", "vera"])
+def test_head_shapes_and_noop(name):
+    d_cond, in_f, out_f, r = 32, 48, 40, 8
+    head = HEADS[name](d_cond, in_f, out_f, r)
+    a, b = head(torch.randn(d_cond))
+    assert a.shape == (r, in_f) and b.shape == (out_f, r)
+    # B path is zero-init for every parameterization => ΔW == 0 at init
+    assert torch.allclose(b @ a, torch.zeros(out_f, in_f), atol=1e-6)
+
+
+def test_head_param_budget_ordering():
+    # A Mistral-like target set: q/k/v over a few layers (GQA: kv out smaller).
+    specs = {}
+    for layer in range(4):
+        specs[f"l{layer}.q"] = (4096, 4096)
+        specs[f"l{layer}.k"] = (4096, 1024)
+        specs[f"l{layer}.v"] = (4096, 1024)
+    d_cond, r = 64, 16
+    vera = estimate_params("vera", specs, d_cond, r)
+    lowrank = estimate_params("lowrank", specs, d_cond, r)
+    full = estimate_params("full", specs, d_cond, r)
+    # smallest-output ordering the S2 ladder assumes
+    assert vera < lowrank < full
