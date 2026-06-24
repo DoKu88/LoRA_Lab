@@ -252,3 +252,32 @@ def test_generator_layer_module_parsing():
     _, _, gen = _gen_setup("vera", n=3)
     assert gen.layer_emb.num_embeddings == 3   # 3 layers in the tiny model
     assert set(gen.module_ids) == {"q_proj", "v_proj"}
+
+
+# ---- Sprint 2/4: HyperConfig + the staged run YAMLs -----------------------
+def test_hyperconfig_round_trip(tmp_path):
+    from lora_lab.hypernet.config import HyperConfig
+    c = HyperConfig(parameterization="vera", objective="sft", max_steps=10)
+    p = c.save(tmp_path / "h.yaml")
+    assert HyperConfig.load(p).to_dict() == c.to_dict()
+
+
+def test_hyperconfig_rejects_bad_values():
+    from lora_lab.hypernet.config import HyperConfig
+    with pytest.raises(ValueError):
+        HyperConfig(parameterization="bogus")
+    with pytest.raises(ValueError):
+        HyperConfig(objective="nope")
+
+
+@pytest.mark.parametrize("name", ["tiny-plumbing", "recon-warmup", "sft-mistral"])
+def test_staged_configs_load(name):
+    """The committed configs/phase2/*.yaml stubs are valid HyperConfigs."""
+    import pathlib
+    from lora_lab.hypernet.config import HyperConfig
+    path = pathlib.Path("configs/phase2") / f"{name}.yaml"
+    if not path.exists():
+        pytest.skip(f"{path} not present")
+    cfg = HyperConfig.load(path)
+    assert cfg.parameterization in ("vera", "lowrank", "full")
+    assert cfg.objective in ("reconstruction", "sft")
