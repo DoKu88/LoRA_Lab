@@ -200,3 +200,55 @@ def test_retrieval_scores_sorted():
     res = idx.query("sentiment polarity", enc, k=3)
     scores = [r.score for r in res]
     assert scores == sorted(scores, reverse=True)
+
+
+# ---- Sprint 2: real generator (HyperLoRAGenerator) ------------------------
+def _gen_setup(param="vera", d=24, n=2):
+    from lora_lab.hypernet.model import HyperLoRAGenerator
+    model = _TinyModel(d, n).eval()
+    for p in model.parameters():
+        p.requires_grad_(False)
+    specs = target_specs(model, TARGETS)
+    gen = HyperLoRAGenerator(specs, d_task=D_TASK, r=4, alpha=8, parameterization=param,
+                             trunk_hidden=32)
+    return model, specs, gen
+
+
+@pytest.mark.parametrize("param", ["vera", "lowrank", "full"])
+def test_generator_shapes_and_noop(param):
+    model, specs, gen = _gen_setup(param)
+    adapter = gen(torch.randn(D_TASK))
+    assert set(adapter) == set(specs)
+    for key, (a, b) in adapter.items():
+        in_f, out_f = specs[key]
+        assert a.shape == (4, in_f) and b.shape == (out_f, 4)
+        assert torch.allclose(b @ a, torch.zeros(out_f, in_f), atol=1e-6)  # no-op at init
+
+
+def test_generator_conditions_on_task():
+    """Different task embeddings -> different generated factors (A path is live)."""
+    _, specs, gen = _gen_setup("vera")
+    a1 = gen(torch.randn(D_TASK))
+    a2 = gen(torch.randn(D_TASK))
+    k = next(iter(specs))
+    assert not torch.allclose(a1[k][0], a2[k][0], atol=1e-5)
+
+
+def test_generator_apply_and_backprop():
+    """Generated adapter injects onto the base and grads reach the generator."""
+    model, _, gen = _gen_setup("vera")
+    x = torch.randn(2, 4, 24)
+    reg = LoRARegistry()
+    reg.set_adapter(gen(torch.randn(D_TASK)))
+    with lora_injected(model, TARGETS, reg, scaling=gen.scaling):
+        out = model(x)
+    out.pow(2).mean().backward()
+    grads = [p.grad for p in gen.parameters() if p.grad is not None]
+    assert grads and any(g.abs().sum() > 0 for g in grads)
+
+
+def test_generator_layer_module_parsing():
+    """Keys with 'layers.N' get distinct layer embeddings; modules distinct too."""
+    _, _, gen = _gen_setup("vera", n=3)
+    assert gen.layer_emb.num_embeddings == 3   # 3 layers in the tiny model
+    assert set(gen.module_ids) == {"q_proj", "v_proj"}

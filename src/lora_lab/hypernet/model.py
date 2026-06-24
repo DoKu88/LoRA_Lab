@@ -15,8 +15,12 @@ B0 can train away from zero. Real conditioning power comes in Sprint 2.
 
 from __future__ import annotations
 
+import re
+
 import torch
 import torch.nn as nn
+
+from .heads import HEADS
 
 
 class HyperLoRA(nn.Module):
@@ -71,3 +75,88 @@ class HyperLoRA(nn.Module):
 def delta_w(a: torch.Tensor, b: torch.Tensor, scaling: float) -> torch.Tensor:
     """ΔW = scaling · (B · A), shape (out, in) — the effective weight delta."""
     return scaling * (b @ a)
+
+
+_LAYER_RE = re.compile(r"layers\.(\d+)\.")
+
+
+def _parse_key(key: str) -> tuple[int, str]:
+    """('...layers.5.self_attn.q_proj') -> (layer_idx=5, module='q_proj')."""
+    m = _LAYER_RE.search(key)
+    layer = int(m.group(1)) if m else 0
+    module = key.rsplit(".", 1)[-1]
+    return layer, module
+
+
+class HyperLoRAGenerator(nn.Module):
+    """Real (Sprint-2) generator: (task description embedding) -> per-target LoRA.
+
+    Replaces the S1 stub's per-target free parameters with a **shared trunk** over
+    the task embedding plus learned **layer** and **module** embeddings, fed to a
+    per-target output head (default VeRA — the smallest parameterization, ~13 M on
+    Mistral-7B). Cross-layer/module structure is shared through the trunk and the
+    embeddings, not 96 independent generators. Same forward contract as the stub:
+    ``task_emb -> {key: (A:(r,in), B:(out,r))}``, with the B path zero-init so
+    ΔW = 0 at start (the no-op invariant). Conditioning is live at init (the A
+    path varies with the task embedding); the B path opens up during training.
+    """
+
+    def __init__(
+        self,
+        target_specs: dict[str, tuple[int, int]],
+        d_task: int,
+        *,
+        r: int = 16,
+        alpha: int = 32,
+        parameterization: str = "vera",
+        d_layer: int = 16,
+        d_module: int = 8,
+        trunk_hidden: int = 128,
+        head_kwargs: dict | None = None,
+    ):
+        super().__init__()
+        self.keys = list(target_specs)
+        self.r = r
+        self.scaling = alpha / r
+        self.parameterization = parameterization
+
+        parsed = {k: _parse_key(k) for k in self.keys}
+        n_layers = max((lyr for lyr, _ in parsed.values()), default=0) + 1
+        modules = sorted({mod for _, mod in parsed.values()})
+        self.module_ids = {m: i for i, m in enumerate(modules)}
+
+        self.trunk = nn.Sequential(
+            nn.Linear(d_task, trunk_hidden), nn.GELU(),
+            nn.Linear(trunk_hidden, trunk_hidden), nn.GELU(),
+        )
+        self.layer_emb = nn.Embedding(n_layers, d_layer)
+        self.module_emb = nn.Embedding(len(modules), d_module)
+        d_cond = trunk_hidden + d_layer + d_module
+
+        head_cls = HEADS[parameterization]
+        self.heads = nn.ModuleDict()
+        self._meta = {}
+        for i, key in enumerate(self.keys):
+            in_f, out_f = target_specs[key]
+            self.heads[self._pk(i)] = head_cls(d_cond, in_f, out_f, r, **(head_kwargs or {}))
+            self._meta[self._pk(i)] = parsed[key]
+
+    @staticmethod
+    def _pk(i: int) -> str:
+        return f"t{i}"
+
+    def num_params(self) -> int:
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+
+    def forward(self, task_emb: torch.Tensor) -> dict[str, tuple[torch.Tensor, torch.Tensor]]:
+        h_task = self.trunk(task_emb)
+        adapter: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
+        for i, key in enumerate(self.keys):
+            layer, module = self._meta[self._pk(i)]
+            cond = torch.cat([
+                h_task,
+                self.layer_emb(torch.tensor(layer)),
+                self.module_emb(torch.tensor(self.module_ids[module])),
+            ], dim=-1)
+            adapter[key] = self.heads[self._pk(i)](cond)
+        return adapter
