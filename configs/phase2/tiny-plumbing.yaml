@@ -7,7 +7,9 @@ load_in_4bit: false
 r: 8
 alpha: 16
 parameterization: vera
-encoder_model: sentence-transformers/all-MiniLM-L6-v2
+# SmolLM2 doubles as the mean-pool encoder here so the CPU smoke is fully offline
+# (the real runs use a sentence-transformers encoder).
+encoder_model: HuggingFaceTB/SmolLM2-135M
 d_layer: 8
 d_module: 4
 trunk_hidden: 64

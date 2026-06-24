@@ -35,3 +35,6 @@ results/phase05/mem_trace/
 # + seed 42 — see docs/phase-1-findings.md reproducibility recipe) and run logs.
 results/phase1/oracles/
 results/phase1/*.log
+
+# Phase 2 run outputs (hypernet checkpoints — heavy, regenerable from config+seed)
+results/phase2/runs/

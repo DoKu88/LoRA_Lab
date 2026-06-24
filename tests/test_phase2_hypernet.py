@@ -384,3 +384,15 @@ def test_recon_sampler_train_only(tmp_path):
     assert set(s.tasks) == {"taskA", "taskB"}        # train only
     assert "taskC" not in s.tasks                     # held-out excluded
     assert len(s) == 2
+
+
+# ---- Sprint 4: entrypoint GPU guard ---------------------------------------
+def test_run_guard_blocks_gpu_without_flag():
+    from lora_lab.hypernet.config import HyperConfig
+    from lora_lab.hypernet.meta_train import assert_run_allowed
+    gpu_cfg = HyperConfig(device="cuda", load_in_4bit=True)
+    with pytest.raises(RuntimeError):
+        assert_run_allowed(gpu_cfg, allow_gpu=False)   # refuses autonomous GPU run
+    assert_run_allowed(gpu_cfg, allow_gpu=True)         # ok when user opts in
+    cpu_cfg = HyperConfig(device="cpu", load_in_4bit=False)
+    assert_run_allowed(cpu_cfg, allow_gpu=False)        # cpu always allowed

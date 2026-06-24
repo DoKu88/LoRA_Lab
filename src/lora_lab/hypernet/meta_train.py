@@ -109,3 +109,17 @@ class SyntheticReconSampler:
         desc = self._descs[self._i % len(self._descs)]
         self._i += 1
         return desc, target
+
+
+def assert_run_allowed(cfg, allow_gpu: bool) -> None:
+    """Refuse the GPU / 4-bit (Mistral SFT) path unless the user opts in.
+
+    The autonomous overnight loop must never launch the expensive, design-
+    sensitive Mistral run; the entrypoint requires an explicit ``--allow-gpu``.
+    """
+    if (getattr(cfg, "device", "cpu") == "cuda" or getattr(cfg, "load_in_4bit", False)) \
+            and not allow_gpu:
+        raise RuntimeError(
+            "refusing GPU/4-bit run without --allow-gpu "
+            "(the Mistral-7B SFT run is launched manually after design review)"
+        )

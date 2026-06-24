@@ -36,6 +36,8 @@ class MeanPoolEncoder:
         self.device = device
         self.max_len = max_len
         self.tok = AutoTokenizer.from_pretrained(model_name)
+        if self.tok.pad_token is None:  # decoder-only encoders (e.g. SmolLM2) lack one
+            self.tok.pad_token = self.tok.eos_token
         self.model = AutoModel.from_pretrained(model_name).to(device).eval()
         for p in self.model.parameters():
             p.requires_grad_(False)
