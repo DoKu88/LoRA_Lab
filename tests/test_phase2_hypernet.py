@@ -281,3 +281,68 @@ def test_staged_configs_load(name):
     cfg = HyperConfig.load(path)
     assert cfg.parameterization in ("vera", "lowrank", "full")
     assert cfg.objective in ("reconstruction", "sft")
+
+
+# ---- Sprint 3/4: meta-training loop ---------------------------------------
+class _TinyLM(nn.Module):
+    """Minimal causal-LM-ish model with q_proj/v_proj targets + a .loss output."""
+    def __init__(self, d=24, vocab=32):
+        super().__init__()
+        from torch.nn import functional as F  # noqa
+        self.vocab = vocab
+        self.embed = nn.Embedding(vocab, d)
+        self.attn = _TinyAttn(d)
+        self.head = nn.Linear(d, vocab)
+
+    def forward(self, input_ids, attention_mask=None, labels=None):
+        import types
+        from torch.nn import functional as F
+        h = self.embed(input_ids)
+        h = h + self.attn(h)
+        logits = self.head(h)
+        loss = None
+        if labels is not None:
+            loss = F.cross_entropy(logits.view(-1, self.vocab), labels.view(-1), ignore_index=-100)
+        return types.SimpleNamespace(loss=loss, logits=logits)
+
+
+def _fake_gen(model, d_task=_FakeEncoder.dim):
+    from lora_lab.hypernet.model import HyperLoRAGenerator
+    specs = target_specs(model, TARGETS)
+    return HyperLoRAGenerator(specs, d_task=d_task, r=4, alpha=8,
+                              parameterization="vera", trunk_hidden=16)
+
+
+def test_meta_train_reconstruction_runs():
+    from lora_lab.hypernet.meta_train import meta_train, SyntheticReconSampler
+    model, specs, _ = _gen_setup("vera")
+    gen = _fake_gen(model)
+    sampler = SyntheticReconSampler(specs, r=4, seed=0)
+    losses = meta_train(gen, model, TARGETS, sampler, _FakeEncoder(),
+                        steps=5, lr=1e-3, objective="reconstruction", log=lambda *_: None)
+    assert len(losses) == 5 and all(torch.isfinite(torch.tensor(l)) for l in losses)
+
+
+def test_meta_train_sft_runs_and_trains_generator():
+    from lora_lab.hypernet.meta_train import meta_train
+    torch.manual_seed(0)
+    lm = _TinyLM(d=24)
+    for p in lm.parameters():
+        p.requires_grad_(False)
+    gen = _fake_gen(lm)
+    ids = torch.randint(0, 32, (2, 6))
+    batch = {"input_ids": ids, "attention_mask": torch.ones_like(ids), "labels": ids.clone()}
+
+    class _FixedSFT:
+        def sample(self):
+            return "classify sentiment", batch
+
+    before = [p.detach().clone() for p in gen.parameters()]
+    losses = meta_train(gen, lm, TARGETS, _FixedSFT(), _FakeEncoder(),
+                        steps=4, lr=1e-2, objective="sft", log=lambda *_: None)
+    assert len(losses) == 4 and all(torch.isfinite(torch.tensor(l)) for l in losses)
+    # generator actually updated (grads flowed through the frozen LM)
+    after = list(gen.parameters())
+    assert any(not torch.allclose(b, a) for b, a in zip(before, after))
+    # base stayed frozen
+    assert all(p.grad is None for p in lm.parameters())
