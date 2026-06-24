@@ -150,3 +150,53 @@ def test_head_param_budget_ordering():
     full = estimate_params("full", specs, d_cond, r)
     # smallest-output ordering the S2 ladder assumes
     assert vera < lowrank < full
+
+
+# ---- Sprint 5: retrieval baseline -----------------------------------------
+class _FakeEncoder:
+    """Deterministic encoder: each description -> a fixed vector by keyword."""
+    dim = 3
+    _VECS = {
+        "sentiment": [1.0, 0.0, 0.0],
+        "entailment": [0.0, 1.0, 0.0],
+        "translation": [0.0, 0.0, 1.0],
+    }
+
+    def encode(self, descriptions):
+        import torch
+        rows = []
+        for d in descriptions:
+            v = [0.0, 0.0, 0.0]
+            for kw, vec in self._VECS.items():
+                if kw in d:
+                    v = vec
+            rows.append(v)
+        return torch.tensor(rows)
+
+
+def test_retrieval_nearest_and_train_only():
+    from lora_lab.hypernet.retrieval import RetrievalIndex
+    enc = _FakeEncoder()
+    train = {
+        "task_sent": {"description": "classify sentiment", "adapter_repo": "A/sent"},
+        "task_nli": {"description": "decide entailment", "adapter_repo": "A/nli"},
+    }
+    idx = RetrievalIndex.build(train, enc)
+    assert len(idx) == 2
+    # a held-out entailment-style description retrieves the NLI train task
+    hit = idx.query("textual entailment between two sentences", enc)[0]
+    assert hit.task == "task_nli"
+    assert hit.payload["adapter_repo"] == "A/nli"
+    # the index contains only train tasks (held-out can't retrieve itself)
+    assert "task_heldout" not in idx.tasks
+
+
+def test_retrieval_scores_sorted():
+    from lora_lab.hypernet.retrieval import RetrievalIndex
+    enc = _FakeEncoder()
+    train = {f"t{i}": {"description": d} for i, d in
+             enumerate(["sentiment", "entailment", "translation"])}
+    idx = RetrievalIndex.build(train, enc)
+    res = idx.query("sentiment polarity", enc, k=3)
+    scores = [r.score for r in res]
+    assert scores == sorted(scores, reverse=True)
