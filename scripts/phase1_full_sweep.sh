@@ -12,7 +12,9 @@
 # `descriptions` and `gate` skip work already recorded, so re-running resumes.
 # The locked held-out split is NOT touched here (expanding it to T2L's 479/11/10
 # is a separate, reviewed step after the full gate lands).
-set -uo pipefail
+# NB: no `set -u` — conda's activation scripts reference unbound vars and would
+# abort under nounset (NVCC_PREPEND_FLAGS). pipefail only.
+set -o pipefail
 cd "$(dirname "$0")/.."
 
 source ~/miniconda3/etc/profile.d/conda.sh
