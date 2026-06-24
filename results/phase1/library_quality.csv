@@ -1,0 +1,15 @@
+task_num,task_name,rank,kind,metric,n_eval,base_score,adapter_score,margin,tau,gate,wallclock_s
+task280,task280_stereoset_classification_stereotype_type,43,classification,exact_match,120,0.075,0.9833,0.9083,0.05,pass,11.0
+task1391,task1391_winogrande_easy_answer_generation,43,classification,exact_match,120,0.1,0.9083,0.8083,0.05,pass,16.4
+task512,task512_twitter_emotion_classification,16,classification,exact_match,120,0.075,0.875,0.8,0.05,pass,11.1
+task190,task190_snli_classification,43,classification,exact_match,120,0.35,0.8917,0.5417,0.05,pass,14.1
+task391,task391_causal_relationship,43,classification,exact_match,120,0.3167,0.8333,0.5167,0.05,pass,9.8
+task843,task843_financial_phrasebank_classification,16,classification,exact_match,120,0.4,0.9083,0.5083,0.05,pass,14.2
+task1344,task1344_glue_entailment_classification,16,classification,exact_match,120,0.4167,0.8917,0.475,0.05,pass,18.1
+task620,task620_ohsumed_medical_subject_headings_answer_generation,43,generation,rougeL,120,0.188,0.5815,0.3935,0.05,pass,34.2
+task442,task442_com_qa_paraphrase_question_generation,43,generation,rougeL,120,0.5032,0.7268,0.2236,0.05,pass,25.5
+task1564,task1564_triviaqa_answer_generation,16,classification,exact_match,11,0.1818,0.3636,0.1818,0.05,pass,4.4
+task290,task290_tellmewhy_question_answerability,43,classification,exact_match,120,0.55,0.725,0.175,0.05,pass,13.6
+task379,task379_agnews_topic_classification,16,classification,exact_match,120,0.625,0.7833,0.1583,0.05,pass,18.0
+task1342,task1342_amazon_us_reviews_title,43,generation,rougeL,120,0.07,0.1436,0.0736,0.05,pass,41.6
+task639,task639_multi_woz_user_utterance_generation,16,generation,rougeL,18,0.09,0.0505,-0.0396,0.05,fail,9.2
