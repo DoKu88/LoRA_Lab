@@ -1,0 +1,4 @@
+parameterization,hypernet_params_M,n_targets,rank,d_cond
+vera,55.68,96,16,280
+lowrank,151.43,96,16,280
+full,2651.85,96,16,280

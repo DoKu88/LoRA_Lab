@@ -446,3 +446,15 @@ def test_meta_train_logs_metrics_sft(tmp_path):
     logger.finish()
     recs = [json.loads(l) for l in (logger.output_dir / "metrics.jsonl").read_text().splitlines() if l.strip()]
     assert len(recs) == 3 and all("sft/loss" in r and "grad_norm" in r for r in recs)
+
+
+# ---- Sprint 2: real-spec size report (T3 inputs) --------------------------
+def test_mistral_spec_size_report():
+    import sys, pathlib
+    sys.path.insert(0, str(pathlib.Path("scripts")))
+    from phase2_size_report import mistral_target_specs, size_rows
+    specs = mistral_target_specs()
+    assert len(specs) == 96  # q/k/v x 32 layers
+    assert specs["model.layers.0.self_attn.k_proj"] == (4096, 1024)  # GQA
+    rows = {r["parameterization"]: r["hypernet_params_M"] for r in size_rows()}
+    assert rows["vera"] < rows["lowrank"] < rows["full"]  # the S2 ladder ordering
