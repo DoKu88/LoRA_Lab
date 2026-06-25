@@ -396,3 +396,53 @@ def test_run_guard_blocks_gpu_without_flag():
     assert_run_allowed(gpu_cfg, allow_gpu=True)         # ok when user opts in
     cpu_cfg = HyperConfig(device="cpu", load_in_4bit=False)
     assert_run_allowed(cpu_cfg, allow_gpu=False)        # cpu always allowed
+
+
+# ---- Sprint 1: W&B / RunLogger contract -----------------------------------
+def _hyper_cfg(tmp_path, objective, **kw):
+    from lora_lab.hypernet.config import HyperConfig
+    return HyperConfig(objective=objective, device="cpu", load_in_4bit=False,
+                       wandb_mode="disabled", output_root=str(tmp_path),
+                       run_name=f"t-{objective}", base_model="tiny/stub", **kw)
+
+
+def test_meta_train_logs_metrics_recon(tmp_path):
+    import json
+    from lora_lab.hypernet.logging import build_run_logger
+    from lora_lab.hypernet.meta_train import meta_train, SyntheticReconSampler
+    model, specs, _ = _gen_setup("vera")
+    gen = _fake_gen(model)
+    cfg = _hyper_cfg(tmp_path, "reconstruction")
+    logger = build_run_logger(cfg, stage="S1")
+    meta_train(gen, model, TARGETS, SyntheticReconSampler(specs, rank=4), _FakeEncoder(),
+               steps=4, lr=1e-3, objective="reconstruction", logger=logger, log=lambda *_: None)
+    logger.finish()
+    recs = [json.loads(l) for l in (logger.output_dir / "metrics.jsonl").read_text().splitlines() if l.strip()]
+    assert len(recs) == 4
+    assert all("reconstruction/loss" in r and "gpu_mem_gb" in r for r in recs)
+    assert (logger.output_dir / "config.yaml").exists()
+    assert (logger.output_dir / "summary.json").exists()  # offline-fallback still writes locally
+
+
+def test_meta_train_logs_metrics_sft(tmp_path):
+    import json
+    from lora_lab.hypernet.logging import build_run_logger
+    from lora_lab.hypernet.meta_train import meta_train
+    lm = _TinyLM(d=24)
+    for p in lm.parameters():
+        p.requires_grad_(False)
+    gen = _fake_gen(lm)
+    ids = torch.randint(0, 32, (2, 6))
+    batch = {"input_ids": ids, "attention_mask": torch.ones_like(ids), "labels": ids.clone()}
+
+    class _FixedSFT:
+        def sample(self):
+            return "classify sentiment", batch
+
+    cfg = _hyper_cfg(tmp_path, "sft")
+    logger = build_run_logger(cfg, stage="S1")
+    meta_train(gen, lm, TARGETS, _FixedSFT(), _FakeEncoder(),
+               steps=3, lr=1e-2, objective="sft", logger=logger, log=lambda *_: None)
+    logger.finish()
+    recs = [json.loads(l) for l in (logger.output_dir / "metrics.jsonl").read_text().splitlines() if l.strip()]
+    assert len(recs) == 3 and all("sft/loss" in r and "grad_norm" in r for r in recs)

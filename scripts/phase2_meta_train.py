@@ -81,7 +81,10 @@ def build_sampler(cfg: HyperConfig, base, tok, specs, *, synthetic: bool):
                          batch_size=cfg.batch_size, max_seq_len=cfg.max_seq_len, seed=cfg.seed)
 
 
-def run(cfg: HyperConfig, *, allow_gpu: bool, synthetic: bool, steps: int | None):
+def run(cfg: HyperConfig, *, allow_gpu: bool, synthetic: bool, steps: int | None,
+        stage: str | None = None):
+    from lora_lab.hypernet.logging import build_run_logger
+
     base, tok, encoder, gen, specs = build_components(cfg, allow_gpu=allow_gpu)
     if cfg.warmup_from and Path(cfg.warmup_from).exists():
         gen.load_state_dict(torch.load(cfg.warmup_from, map_location=cfg.device))
@@ -90,17 +93,25 @@ def run(cfg: HyperConfig, *, allow_gpu: bool, synthetic: bool, steps: int | None
     n = steps or cfg.max_steps
     print(f"[meta-train] {cfg.name}: {n} steps, objective={cfg.objective}, "
           f"params={gen.num_params():,}, targets={len(specs)}, sampler={type(sampler).__name__}")
-    losses = meta_train(gen, base, cfg.target_modules, sampler, encoder,
-                        steps=n, lr=cfg.lr, objective=cfg.objective, device=cfg.device)
 
-    out_dir = Path(cfg.output_root) / cfg.name
-    out_dir.mkdir(parents=True, exist_ok=True)
+    # W&B tracking contract: RunLogger writes config.yaml + metrics.jsonl + summary.json
+    # under output_root/name and mirrors to W&B (best-effort, offline fallback).
+    logger = build_run_logger(cfg, stage=stage or cfg.objective)
+    losses = meta_train(gen, base, cfg.target_modules, sampler, encoder,
+                        steps=n, lr=cfg.lr, objective=cfg.objective, device=cfg.device,
+                        logger=logger)
+
+    out_dir = logger.output_dir
     torch.save(gen.state_dict(), out_dir / "hypernet.pt")
-    summary = {"name": cfg.name, "objective": cfg.objective, "steps": n,
-               "params": gen.num_params(), "loss_first": losses[0], "loss_last": losses[-1]}
-    (out_dir / "summary.json").write_text(json.dumps(summary, indent=2))
+    peak_vram_gb = (torch.cuda.max_memory_allocated() / 1e9) if cfg.device == "cuda" else 0.0
+    logger.set_summary(name=cfg.name, objective=cfg.objective, parameterization=cfg.parameterization,
+                       steps=n, hypernet_params=gen.num_params(), n_targets=len(specs),
+                       loss_first=round(losses[0], 6), loss_last=round(losses[-1], 6),
+                       peak_vram_gb=round(peak_vram_gb, 4))
+    logger.log_artifact_path(out_dir / "hypernet.pt", "hypernet_checkpoint")
+    logger.finish()
     print(f"[meta-train] done: loss {losses[0]:.4f} -> {losses[-1]:.4f}; saved {out_dir}/hypernet.pt")
-    return summary
+    return dict(logger.summary)
 
 
 def main() -> int:
@@ -111,9 +122,14 @@ def main() -> int:
                     help="required to run the cuda/4-bit (Mistral SFT) path")
     ap.add_argument("--synthetic", action="store_true",
                     help="use the synthetic recon sampler (CPU plumbing smoke)")
+    ap.add_argument("--wandb", choices=["online", "offline", "disabled"], default=None,
+                    help="override the config's wandb_mode for this run")
+    ap.add_argument("--stage", default=None, help="W&B group / sprint tag")
     args = ap.parse_args()
     cfg = HyperConfig.load(args.config)
-    run(cfg, allow_gpu=args.allow_gpu, synthetic=args.synthetic, steps=args.steps)
+    if args.wandb:
+        cfg.wandb_mode = args.wandb
+    run(cfg, allow_gpu=args.allow_gpu, synthetic=args.synthetic, steps=args.steps, stage=args.stage)
     return 0
 
 

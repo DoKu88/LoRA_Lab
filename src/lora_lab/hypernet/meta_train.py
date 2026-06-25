@@ -15,10 +15,12 @@ explicit ``--allow-gpu`` so it is never launched autonomously.
 
 from __future__ import annotations
 
+import time
 from typing import Protocol
 
 import torch
 
+from ..utils.vram import cuda_mem_snapshot, reset_peak_memory
 from .apply import LoRARegistry, inject, remove
 from .recon import reconstruction_loss
 
@@ -46,11 +48,14 @@ def meta_train(
     device: str = "cpu",
     log_every: int = 10,
     log=print,
+    logger=None,
 ) -> list[float]:
     """Run ``steps`` of meta-training; return the per-step loss trace.
 
     ``generator`` trains; ``base`` stays frozen. For SFT we inject the generator's
     output as a live adapter so the task loss flows back into the generator only.
+    If ``logger`` (a ``RunLogger``) is given, every step logs ``<objective>/loss``,
+    lr, grad norm, step time, and the VRAM snapshot (the W&B tracking contract).
     """
     if objective not in ("reconstruction", "sft"):
         raise ValueError(f"objective must be reconstruction|sft, got {objective!r}")
@@ -58,12 +63,15 @@ def meta_train(
     base.to(device).eval()
     optimizer = torch.optim.Adam(generator.parameters(), lr=lr)
     scaling = generator.scaling
+    if device == "cuda":
+        reset_peak_memory()
 
     registry = LoRARegistry()
     handles = inject(base, target_modules, registry, scaling=scaling) if objective == "sft" else []
     losses: list[float] = []
     try:
         for step in range(steps):
+            t_step = time.time()
             description, target = sampler.sample()
             task_emb = encoder.encode([description]).to(device).squeeze(0)
             adapter = generator(task_emb)
@@ -77,8 +85,22 @@ def meta_train(
 
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                (p for p in generator.parameters() if p.requires_grad), 1.0
+            )
             optimizer.step()
             losses.append(float(loss.item()))
+
+            if logger is not None:
+                snap = cuda_mem_snapshot() if device == "cuda" else {"allocated_gb": 0.0, "reserved_gb": 0.0}
+                logger.log_metrics(step, {
+                    f"{objective}/loss": round(losses[-1], 6),
+                    "lr": lr,
+                    "grad_norm": round(float(grad_norm), 4),
+                    "step_time_s": round(time.time() - t_step, 4),
+                    "gpu_mem_gb": round(snap["allocated_gb"], 4),
+                    "gpu_mem_reserved_gb": round(snap["reserved_gb"], 4),
+                })
             if (step + 1) % log_every == 0:
                 log(f"[meta-train] step {step+1}/{steps} {objective} loss={losses[-1]:.5f}")
     finally:
