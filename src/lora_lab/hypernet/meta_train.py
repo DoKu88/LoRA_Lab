@@ -77,6 +77,7 @@ def meta_train(
             adapter = generator(task_emb)
 
             if objective == "reconstruction":
+                target = {k: (a.to(device), b.to(device)) for k, (a, b) in target.items()}
                 loss = reconstruction_loss(adapter, target, scaling=scaling)
             else:  # sft — task loss through the frozen base
                 registry.set_adapter(adapter)

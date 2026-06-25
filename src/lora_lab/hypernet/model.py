@@ -153,13 +153,14 @@ class HyperLoRAGenerator(nn.Module):
 
     def forward(self, task_emb: torch.Tensor) -> dict[str, tuple[torch.Tensor, torch.Tensor]]:
         task_hidden = self.trunk(task_emb)
+        device = task_hidden.device  # index tensors must match the (possibly cuda) embeddings
         adapter: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
         for index, key in enumerate(self.keys):
             layer, module = self._meta[self._param_key(index)]
             conditioning = torch.cat([
                 task_hidden,
-                self.layer_emb(torch.tensor(layer)),
-                self.module_emb(torch.tensor(self.module_ids[module])),
+                self.layer_emb(torch.tensor(layer, device=device)),
+                self.module_emb(torch.tensor(self.module_ids[module], device=device)),
             ], dim=-1)
             adapter[key] = self.heads[self._param_key(index)](conditioning)
         return adapter
