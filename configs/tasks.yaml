@@ -67,3 +67,27 @@ tasks:
       train: 87
       test: 11
       valid: 11
+  task1391_winogrande_easy_answer_generation:
+    hf_repo: Lots-of-LoRAs/task1391_winogrande_easy_answer_generation
+    kind: classification
+    metric: exact_match
+    description: In this task, you are given a question containing a blank (_) and
+      two options. You should pick the best option to answer the question. Please
+      answer with "A" or "B".
+  task290_tellmewhy_question_answerability:
+    hf_repo: Lots-of-LoRAs/task290_tellmewhy_question_answerability
+    kind: classification
+    metric: exact_match
+    description: In this task you are given a story and a question regarding that
+      story. You must judge whether the question is answerable based on the info given
+      to you. Label the instances as "Answerable" or "Not Answerable" based on your
+      judgment. the story and the question are separated by a new line character.
+  task379_agnews_topic_classification:
+    hf_repo: Lots-of-LoRAs/task379_agnews_topic_classification
+    kind: classification
+    metric: exact_match
+    description: In this task, you are given a news article. Your task is to classify
+      the article to one out of the four topics 'World', 'Sports', 'Business', 'Sci/Tech'
+      if the article's main topic is relevant to the world, sports, business, and
+      science/technology, correspondingly. If you are not sure about the topic, choose
+      the closest option. Note that URLs in the text have been replaced with [Link].

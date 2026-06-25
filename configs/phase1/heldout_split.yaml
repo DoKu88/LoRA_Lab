@@ -1,0 +1,24 @@
+lock_hash: b0143d2dad87c937
+seed: 42
+counts:
+  train: 9
+  val: 1
+  held_out: 3
+  removed: 0
+held_out:
+  task1391: task1391_winogrande_easy_answer_generation
+  task290: task290_tellmewhy_question_answerability
+  task379: task379_agnews_topic_classification
+val:
+  task442: task442_com_qa_paraphrase_question_generation
+removed: []
+train:
+  task1342: task1342_amazon_us_reviews_title
+  task1344: task1344_glue_entailment_classification
+  task1564: task1564_triviaqa_answer_generation
+  task190: task190_snli_classification
+  task280: task280_stereoset_classification_stereotype_type
+  task391: task391_causal_relationship
+  task512: task512_twitter_emotion_classification
+  task620: task620_ohsumed_medical_subject_headings_answer_generation
+  task843: task843_financial_phrasebank_classification

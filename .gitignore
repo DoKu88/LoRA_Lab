@@ -28,3 +28,13 @@ hf_cache/
 # Phase 0.5 intermediates (regenerable); the feasibility_table.* and plots/ ARE committed
 results/phase05/runs/
 results/phase05/mem_trace/
+
+# Phase 1 intermediates. Committed: configs/phase1/*.yaml (manifest + locked split),
+# library_quality.* (gate table), gate_results.jsonl, oracles.json. NOT committed:
+# the oracle LoRA checkpoints + wandb (heavy, regenerable from the committed config
+# + seed 42 — see docs/phase-1-findings.md reproducibility recipe) and run logs.
+results/phase1/oracles/
+results/phase1/*.log
+
+# Phase 2 run outputs (hypernet checkpoints — heavy, regenerable from config+seed)
+results/phase2/runs/

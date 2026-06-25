@@ -1,0 +1,31 @@
+# Phase 2 Sprint 1 — tiny-model plumbing smoke (CPU, no GPU).
+# Validates generate -> apply -> backprop on a small base before scaling.
+# Run: scripts/phase2_smoke.py uses these dims; safe to run any time (CPU-only).
+base_model: HuggingFaceTB/SmolLM2-135M
+target_modules: [q_proj, v_proj]
+load_in_4bit: false
+r: 8
+alpha: 16
+parameterization: vera
+# SmolLM2 doubles as the mean-pool encoder here so the CPU smoke is fully offline
+# (the real runs use a sentence-transformers encoder).
+encoder_model: HuggingFaceTB/SmolLM2-135M
+d_layer: 8
+d_module: 4
+trunk_hidden: 64
+objective: reconstruction
+lr: 1.0e-3
+max_steps: 50
+batch_size: 2
+grad_accum: 1
+max_seq_len: 128
+seed: 42
+gradient_checkpointing: false
+warmup_from: null
+library_path: configs/phase1/library.yaml
+split_path: configs/phase1/heldout_split.yaml
+device: cpu
+output_root: results/phase2/runs
+run_name: tiny-plumbing
+wandb_project: lora-lab-phase2
+wandb_mode: disabled

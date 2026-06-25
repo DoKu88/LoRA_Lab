@@ -1,0 +1,40 @@
+# Phase 2 Sprint 4 — SFT meta-training (THE GATE RUN).
+#
+# VRAM-critical: applies the generated LoRA to the frozen 4-bit Mistral-7B, runs
+# the task, and backprops the task loss THROUGH the base into the hypernetwork.
+# This is the design-sensitive, GPU-heavy step.
+#
+# >>> LAUNCH ONLY after (a) reviewing the parameterization choice below and
+# >>> (b) the GPU is free (the Phase-1 gate must have finished). Not run autonomously.
+#
+# Recommended order:
+#   1. (optional) train the recon warmup:  configs/phase2/recon-warmup.yaml
+#   2. this SFT run (warm-starts from the recon checkpoint if present)
+#   3. eval vs baselines + the gate (generated > retrieval on held-out)
+base_model: mistralai/Mistral-7B-Instruct-v0.2
+target_modules: [q_proj, k_proj, v_proj]   # match the Phase-1 library (Phase-3 comparability)
+load_in_4bit: true                          # QLoRA-style frozen base
+r: 16
+alpha: 32
+parameterization: vera   # 12.9M params (vs lowrank 151M / full 613M). Climb the
+                         # ladder only if the gate (generated > retrieval) fails.
+encoder_model: sentence-transformers/all-MiniLM-L6-v2
+d_layer: 16
+d_module: 8
+trunk_hidden: 256
+objective: sft
+lr: 1.0e-4
+max_steps: 2000
+batch_size: 4
+grad_accum: 2
+max_seq_len: 512
+seed: 42
+gradient_checkpointing: true   # base-backprop memory lever (notes.md §B)
+warmup_from: results/phase2/runs/recon-warmup-vera/hypernet.pt
+library_path: configs/phase1/library.yaml
+split_path: configs/phase1/heldout_split.yaml
+device: cuda
+output_root: results/phase2/runs
+run_name: sft-vera-mistral7b
+wandb_project: lora-lab-phase2
+wandb_mode: offline

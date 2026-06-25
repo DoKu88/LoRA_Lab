@@ -1,0 +1,44 @@
+[
+  {
+    "task_name": "task1391_winogrande_easy_answer_generation",
+    "metric": "exact_match",
+    "oracle_score": 0.4333,
+    "checkpoint": "results/phase1/oracles/oracle-task1391_winogrande_easy_answer_generation/checkpoint",
+    "checkpoint_mb": 39.375,
+    "peak_vram_gb": 20.6384,
+    "final_train_loss": 0.34633,
+    "steps": 250,
+    "task_num": "task1391",
+    "base_score": 0.1,
+    "margin_vs_base": 0.3333,
+    "gate": "pass"
+  },
+  {
+    "task_name": "task290_tellmewhy_question_answerability",
+    "metric": "exact_match",
+    "oracle_score": 0.7583,
+    "checkpoint": "results/phase1/oracles/oracle-task290_tellmewhy_question_answerability/checkpoint",
+    "checkpoint_mb": 39.375,
+    "peak_vram_gb": 23.1918,
+    "final_train_loss": 0.04673,
+    "steps": 250,
+    "task_num": "task290",
+    "base_score": 0.55,
+    "margin_vs_base": 0.2083,
+    "gate": "pass"
+  },
+  {
+    "task_name": "task379_agnews_topic_classification",
+    "metric": "exact_match",
+    "oracle_score": 0.9333,
+    "checkpoint": "results/phase1/oracles/oracle-task379_agnews_topic_classification/checkpoint",
+    "checkpoint_mb": 39.375,
+    "peak_vram_gb": 25.7027,
+    "final_train_loss": 0.00719,
+    "steps": 250,
+    "task_num": "task379",
+    "base_score": 0.625,
+    "margin_vs_base": 0.3083,
+    "gate": "pass"
+  }
+]
