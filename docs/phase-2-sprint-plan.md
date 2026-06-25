@@ -25,7 +25,7 @@ Train a **text-conditioned hypernetwork** that, in a **single forward pass**, ge
 
 - **Single GPU: 32 GB VRAM.** Unlike Phase 1 (inference-only), Phase 2 **trains**, and the memory-critical step is **backprop through the frozen quantized base into the hypernetwork** (notes.md §B). The base is a **frozen 4-bit NF4 feature extractor** (QLoRA-style), so the situation is close to QLoRA, not full pretraining — but the activation/gradient path through a 7B still needs **gradient checkpointing** and possibly **activation offload**. Profile this first; it's where we OOM.
 - **Output dimensionality dominates trainability *and* memory (§A.2).** A Mistral-7B LoRA over q/k/v at rank 16 across 32 layers is ~9.4 M parameters (from Phase 1's oracle: `trainable% = 0.13`). A hypernetwork that emits *all* of that per task is a large output space. Start with the **smallest viable target** and grow only if the gate needs it (see the output-parameterization decision in S2).
-- **The held-out split is frozen (Phase 1).** Train **only** on the train-split tasks; the held-out tasks (and their descriptions) are never seen during meta-training. The Phase-1 lock (`heldout_split.yaml`, `lock_hash`) is the contract. Leakage here invalidates the gate.
+- **The held-out split is frozen once re-locked.** The original 9-task pilot split is replaced by the curated **~400 train / 10 val / 30 held-out** spec (see the Phase-2 run spec above); re-locking re-runs `make_split` → a new `lock_hash` in `heldout_split.yaml`, which is then the contract. Train **only** on the train-split tasks; the held-out tasks (and their descriptions) are never seen during meta-training. Leakage invalidates the gate.
 - **Library quality is assumed, not re-litigated.** Phase 2 distills the **gate-passing** Phase-1 library only (quarantined adapters like task639 are excluded by construction). Garbage-in is already filtered.
 - **Plumbing before scale (notes.md §B, §A — the single most repeated lesson).** Get the generate→apply→backprop loop green on a **tiny** model (SmolLM2-135M / Qwen-0.5B) with **3 toy tasks** before touching Mistral-7B. A working loop on a small model de-risks the whole phase.
 - **Determinism / W&B.** Seeded; every run logs to W&B best-effort/non-blocking with offline fallback (project working pref), reusing `train/run_logger.py`.
@@ -42,6 +42,76 @@ Train a **text-conditioned hypernetwork** that, in a **single forward pass**, ge
 | VRAM/RAM tracing, peak memory | `src/lora_lab/utils/vram.py` |
 | W&B logging | `src/lora_lab/train/run_logger.py` |
 | 4-bit base load (NF4) + PEFT LoRA injection | `src/lora_lab/methods/build.py` (qlora path) |
+
+---
+
+## Phase-2 run spec — data scale, split, training, and outputs
+
+> Supersedes the original **pilot** split (9 train / 1 val / 3 held-out, built from
+> the 14 `pilot: true` tasks). See [`phase-2-hypernet-sizing-options.md`](./phase-2-hypernet-sizing-options.md)
+> for the full rationale and the held-out-axis comparison table.
+
+### 1. How much data are we training on?
+
+| Split | Tasks | Notes |
+|---|---|---|
+| **Train** | **~400** | Drawn broadly across all families from the **1,037 gate-passing** library tasks (564 generation + 473 classification). T2L used 479 — we match that order of magnitude. |
+| **Val** | **10** | Early-stop / checkpoint selection only. |
+| **Held-out (gate)** | **30** | Curated for diagnostic power (see §2). Never seen in training — the leakage contract. |
+| *(reserved)* | ~600 | Remaining passing tasks held in reserve for Phase-4 scaling ablations. |
+
+- **SFT (S4):** batch 4 × **~6,000 steps** ≈ **24,000 example-passes** (~60 per train
+  task, sampled with replacement across the ~400 tasks).
+- **Reconstruction warmup (S3):** ~400 train-split library LoRA adapters as ΔW
+  targets, ~2,000 steps (no base forward).
+
+### 2. What is the held-out set?
+
+A **curated 30-task held-out set** built for three generalization axes where the
+retrieval baseline is *plausible but wrong* — so a pass is unambiguous (full
+analysis + per-axis table in the sizing-options doc):
+
+| Axis | Held-out picks | # | Why it proves generalization |
+|---|---|---|---|
+| **Format transfer** ⭐ | hold out the `*_answer_generation` form of datasets whose `*_classification` form is trained (31 paired datasets available) | 15 | retrieval lands on the same-topic, wrong-output-format LoRA → fails. |
+| **Language transfer** | hold out translation pairs unseen in that direction | 8 | retrieval returns a different-language LoRA → fails. |
+| **Domain transfer** | same skill, new domain (e.g. train Amazon/Yelp sentiment, hold out twitter_emotion / financial_phrasebank / bengali_reviews) | 7 | tougher retrieval competitor → measures skill-vs-domain. |
+
+> The pilot **accidentally trained on** `twitter_emotion`, `financial_phrasebank`,
+> and `amazon_reviews` — these become **held-out** domain-transfer targets here.
+
+### 3. Training broadly across tasks
+
+Training samples **uniformly across all ~400 train tasks and all families**
+(classification, generation, translation, NER, QA, …) — not a single-family
+diet. Breadth is what lets the hypernetwork learn the *description → adapter* map
+rather than memorize a few tasks; it is the precondition for the held-out axes in
+§2 to be reachable. Re-lock the split with `make_split` (curated variant) → new
+`lock_hash` in `configs/phase1/heldout_split.yaml`.
+
+### 4. Training-time estimate (single 32 GB GPU)
+
+| Stage | Steps | Est. wall-clock | Notes |
+|---|---|---|---|
+| Recon warmup (S3) | ~2,000 | **~20–30 min** | no base forward → cheap; scales with hypernet size. |
+| SFT meta-train (S4) | ~6,000 (batch 4) | **~5–7.5 hr** | base-backprop-bound (~3–4.5 s/step); independent of #tasks, scales with #steps. |
+| Held-out eval (S5) | 30 tasks × 4 conditions | **~1–2 hr** | generation + scoring on the held-out test splits. |
+| **Total (default VeRA)** | — | **< 10 hr** | T2L-M parameterization ≈ same; T2L-L adds OOM-risk/throttle (see sizing doc). |
+
+### 5. Charts, figures & tables we will output (→ `results/phase2/`, `docs/phase-2-findings.md`)
+
+**Tables**
+- **T1 — Four-way held-out gate table** (primary): per-task `generated / oracle / base / retrieval` score, margin-vs-retrieval, margin-vs-base, verdict. `{csv,parquet,md}`.
+- **T2 — Per-axis gate summary**: mean score + margin grouped by held-out axis (format / language / domain) + aggregate, with the pass/fail verdict per axis.
+- **T3 — Hypernet size & memory**: param count + peak VRAM per parameterization (VeRA vs full), measured (replaces the predicted sizing-options table).
+- **T4 — Data-scale summary**: tasks & example-passes per split (the §1 numbers, as run).
+
+**Figures**
+- **F1 — Generalization curve** (headline): score vs description-embedding distance to nearest train task, one line each for generated / retrieval / oracle / base. Generalization shows as generated staying high while retrieval decays with distance.
+- **F2 — Generated-vs-retrieval scatter**: one point per held-out task; above the diagonal = a win. The visual gate.
+- **F3 — Training curves**: recon + SFT loss vs step (W&B).
+- **F4 — Peak-VRAM-per-phase bar**: the backprop-through-base memory profile (the 32 GB constraint).
+- **F5 — Per-axis margin bars**: mean margin vs retrieval and vs base, per generalization axis.
 
 ### Proposed repo layout
 
@@ -120,8 +190,8 @@ Each sprint lists: **(1) Goal · (2) Requirements · (3) Definition of done · (
 1. **Goal:** Evaluate generated adapters on the **held-out** tasks against three baselines and render the gate verdict.
 2. **Requirements:**
    - **Three baselines (§A.10):** (a) **trained-LoRA upper bound** = the Phase-1 **oracle** LoRA for each held-out task; (b) **base lower bound** = bare Mistral-7B; (c) **nearest-neighbor retrieval** = embed the held-out description, retrieve the closest **train**-split task's library LoRA by description embedding (`retrieval.py`), apply it. Same eval harness, same metric, same split as Phase 1.
-   - For each held-out task: score generated-LoRA, oracle, base, retrieval on the held-out test split; tabulate.
-   - **The gate:** generated mean score **> retrieval** mean score across held-out tasks (and clearly > base). Report per-task and aggregate.
+   - For each held-out task: score generated-LoRA, oracle, base, retrieval on the held-out test split; tabulate (table **T1**).
+   - **The gate:** generated mean score **> retrieval** mean score across the 30 held-out tasks (and clearly > base). Report per-task (T1), **per generalization axis** (format / language / domain — table **T2**, figure **F5**), and aggregate. Emit the **generalization curve** (F1, score vs distance-to-nearest-train) and the **generated-vs-retrieval scatter** (F2) as the headline evidence.
    - **Failure-mode analysis (§A.12):** where generated loses, is it bad task *identification* (retrieval would've picked a better adapter → an encoder/conditioning problem) or bad *execution* (right intent, weak weights → an output-parameterization/training problem)? This decides what to fix.
 3. **Definition of done:** the four-way held-out table is committed; the gate verdict (pass/fail) is stated with the margin; if it fails, the failure-mode analysis points to the specific fix (per notes.md: smaller VeRA target §2.4, DoRA §2.3, or better distillation) **before** any Phase-3 work.
 4. **Required testing:** all four conditions eval'd on the *identical* held-out split (same split hash as Phase 1); retrieval never retrieves a held-out task (train-split index only); generated and oracle adapters share the exact LoRA shape (Phase-3 comparability); the gate comparison is computed over the same task set for all conditions.
@@ -130,7 +200,7 @@ Each sprint lists: **(1) Goal · (2) Requirements · (3) Definition of done · (
 
 1. **Goal:** Write up Phase 2 and stage the ablation knobs Phase 4 will sweep.
 2. **Requirements:**
-   - `docs/phase-2-findings.md`: architecture, output parameterization (and why), the SFT memory profile, the four-way gate table, the failure-mode verdict, and the recommendation.
+   - `docs/phase-2-findings.md`: architecture, output parameterization (and why), the SFT memory profile, and the full output set — tables **T1–T4** and figures **F1–F5** (see the Phase-2 run spec §5) — plus the failure-mode verdict and the recommendation.
    - Record the cheap ablation axes for later (rank, #train tasks, seed) — wire them as config knobs now even if not swept until Phase 4.
    - Versioned hypernetwork checkpoint + the exact configs to reproduce it; W&B report (best-effort).
 3. **Definition of done:** findings committed; gate verdict + reproducibility recipe documented; ablation knobs exposed in `configs/phase2/`.
