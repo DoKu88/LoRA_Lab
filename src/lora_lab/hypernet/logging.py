@@ -24,7 +24,7 @@ class _LoggerCfg:
         self.logging = SimpleNamespace(
             wandb_mode=cfg.wandb_mode,
             wandb_project=cfg.wandb_project,
-            wandb_entity=None,
+            wandb_entity=getattr(cfg, "wandb_entity", None),
         )
         self.model_slug = cfg.base_model.split("/")[-1]
         self.task = cfg.objective       # W&B job_type

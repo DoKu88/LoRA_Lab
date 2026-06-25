@@ -58,6 +58,9 @@ class HyperConfig:
     output_root: str = "results/phase2/runs"
     run_name: str | None = None
     wandb_project: str = "lora-lab-phase2"
+    # The W&B account's *default* entity is a team (ctorl) without access to this
+    # personal project — so name the entity explicitly or online init 403s.
+    wandb_entity: str | None = "doku88"
     wandb_mode: str = "offline"
 
     def __post_init__(self) -> None:
