@@ -4,14 +4,14 @@
 base_model: HuggingFaceTB/SmolLM2-135M
 target_modules: [q_proj, v_proj]
 load_in_4bit: false
-r: 8
+rank: 8
 alpha: 16
 parameterization: vera
 # SmolLM2 doubles as the mean-pool encoder here so the CPU smoke is fully offline
 # (the real runs use a sentence-transformers encoder).
 encoder_model: HuggingFaceTB/SmolLM2-135M
-d_layer: 8
-d_module: 4
+layer_dim: 8
+module_dim: 4
 trunk_hidden: 64
 objective: reconstruction
 lr: 1.0e-3

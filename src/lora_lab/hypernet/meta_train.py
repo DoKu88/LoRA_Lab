@@ -56,28 +56,28 @@ def meta_train(
         raise ValueError(f"objective must be reconstruction|sft, got {objective!r}")
     generator.to(device).train()
     base.to(device).eval()
-    opt = torch.optim.Adam(generator.parameters(), lr=lr)
+    optimizer = torch.optim.Adam(generator.parameters(), lr=lr)
     scaling = generator.scaling
 
-    reg = LoRARegistry()
-    handles = inject(base, target_modules, reg, scaling=scaling) if objective == "sft" else []
+    registry = LoRARegistry()
+    handles = inject(base, target_modules, registry, scaling=scaling) if objective == "sft" else []
     losses: list[float] = []
     try:
         for step in range(steps):
-            desc, target = sampler.sample()
-            task_emb = encoder.encode([desc]).to(device).squeeze(0)
+            description, target = sampler.sample()
+            task_emb = encoder.encode([description]).to(device).squeeze(0)
             adapter = generator(task_emb)
 
             if objective == "reconstruction":
                 loss = reconstruction_loss(adapter, target, scaling=scaling)
             else:  # sft — task loss through the frozen base
-                reg.set_adapter(adapter)
-                batch = {k: v.to(device) for k, v in target.items()}
+                registry.set_adapter(adapter)
+                batch = {key: value.to(device) for key, value in target.items()}
                 loss = base(**batch).loss
 
-            opt.zero_grad(set_to_none=True)
+            optimizer.zero_grad(set_to_none=True)
             loss.backward()
-            opt.step()
+            optimizer.step()
             losses.append(float(loss.item()))
             if (step + 1) % log_every == 0:
                 log(f"[meta-train] step {step+1}/{steps} {objective} loss={losses[-1]:.5f}")
@@ -94,21 +94,21 @@ class SyntheticReconSampler:
     library adapters; the real S4 sampler tokenizes each task's SNI batch.
     """
 
-    def __init__(self, target_specs: dict[str, tuple[int, int]], r: int, seed: int = 0):
+    def __init__(self, target_specs: dict[str, tuple[int, int]], rank: int, seed: int = 0):
         self.specs = target_specs
-        self.r = r
-        self.g = torch.Generator().manual_seed(seed)
-        self._descs = ["classify sentiment", "translate text", "answer the question",
-                       "summarize the passage", "detect entailment"]
-        self._i = 0
+        self.rank = rank
+        self.torch_generator = torch.Generator().manual_seed(seed)
+        self._descriptions = ["classify sentiment", "translate text", "answer the question",
+                              "summarize the passage", "detect entailment"]
+        self._index = 0
 
     def sample(self) -> tuple[str, dict]:
-        target = {k: (torch.randn(self.r, in_f, generator=self.g),
-                      torch.randn(out_f, self.r, generator=self.g))
-                  for k, (in_f, out_f) in self.specs.items()}
-        desc = self._descs[self._i % len(self._descs)]
-        self._i += 1
-        return desc, target
+        target = {key: (torch.randn(self.rank, in_features, generator=self.torch_generator),
+                        torch.randn(out_features, self.rank, generator=self.torch_generator))
+                  for key, (in_features, out_features) in self.specs.items()}
+        description = self._descriptions[self._index % len(self._descriptions)]
+        self._index += 1
+        return description, target
 
 
 def assert_run_allowed(cfg, allow_gpu: bool) -> None:

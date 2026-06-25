@@ -25,14 +25,14 @@ def reconstruction_loss(
     ``generated``/``target`` map key -> (A, B). Only keys present in both are
     scored (so a target adapter covering a subset of targets is fine).
     """
-    keys = [k for k in generated if k in target]
+    keys = [key for key in generated if key in target]
     if not keys:
         raise ValueError("no shared target keys between generated and target adapters")
     total = generated[keys[0]][0].new_zeros(())
-    for k in keys:
-        ga, gb = generated[k]
-        ta, tb = target[k]
-        dw_g = delta_w(ga, gb, scaling)
-        dw_t = delta_w(ta, tb, scaling)
-        total = total + torch.nn.functional.smooth_l1_loss(dw_g, dw_t, reduction=reduction)
+    for key in keys:
+        gen_a, gen_b = generated[key]
+        target_a, target_b = target[key]
+        delta_gen = delta_w(gen_a, gen_b, scaling)
+        delta_target = delta_w(target_a, target_b, scaling)
+        total = total + torch.nn.functional.smooth_l1_loss(delta_gen, delta_target, reduction=reduction)
     return total / len(keys)

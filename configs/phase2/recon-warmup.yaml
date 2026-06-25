@@ -5,12 +5,12 @@
 base_model: mistralai/Mistral-7B-Instruct-v0.2
 target_modules: [q_proj, k_proj, v_proj]
 load_in_4bit: true
-r: 16
+rank: 16
 alpha: 32
 parameterization: vera
 encoder_model: sentence-transformers/all-MiniLM-L6-v2
-d_layer: 16
-d_module: 8
+layer_dim: 16
+module_dim: 8
 trunk_hidden: 256
 objective: reconstruction
 lr: 1.0e-3

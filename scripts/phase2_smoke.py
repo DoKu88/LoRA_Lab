@@ -24,7 +24,7 @@ from lora_lab.hypernet.recon import reconstruction_loss  # noqa: E402
 
 BASE = "HuggingFaceTB/SmolLM2-135M"
 TARGETS = ["q_proj", "v_proj"]
-D_TASK = 16
+TASK_DIM = 16
 
 
 def main() -> int:
@@ -41,10 +41,10 @@ def main() -> int:
 
     specs = target_specs(model, TARGETS)
     print(f"[smoke] {len(specs)} target modules (e.g. {next(iter(specs))})")
-    hyper = HyperLoRA(specs, d_task=D_TASK, r=8, alpha=16)
+    hyper = HyperLoRA(specs, task_dim=TASK_DIM, rank=8, alpha=16)
     print(f"[smoke] hypernetwork params: {hyper.num_params():,}")
 
-    task_emb = torch.randn(D_TASK)
+    task_emb = torch.randn(TASK_DIM)
 
     # --- objective 1: reconstruction (no base forward) ---------------------
     # Unit-scale toy target so the loss/grad are clearly non-trivial (generated
@@ -64,7 +64,7 @@ def main() -> int:
     labels = batch["input_ids"].clone()
     labels[batch["attention_mask"] == 0] = -100
 
-    # no-op check: injected logits == base logits at init (B0=0)
+    # no-op check: injected logits == base logits at init (base_b=0)
     with torch.no_grad():
         base_logits = model(**batch).logits
     reg = LoRARegistry()

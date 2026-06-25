@@ -28,14 +28,14 @@ class HyperConfig:
     base_model: str = "mistralai/Mistral-7B-Instruct-v0.2"
     target_modules: list[str] = field(default_factory=lambda: ["q_proj", "k_proj", "v_proj"])
     load_in_4bit: bool = True          # QLoRA-style frozen base
-    r: int = 16
+    rank: int = 16
     alpha: int = 32
 
     # --- hypernetwork architecture ------------------------------------------
     parameterization: str = "vera"     # vera | lowrank | full (the S2 ladder)
     encoder_model: str = "sentence-transformers/all-MiniLM-L6-v2"
-    d_layer: int = 16
-    d_module: int = 8
+    layer_dim: int = 16
+    module_dim: int = 8
     trunk_hidden: int = 256
 
     # --- objective + optimization -------------------------------------------
@@ -77,24 +77,24 @@ class HyperConfig:
         return dataclasses.asdict(self)
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "HyperConfig":
-        field_map = {f.name for f in fields(cls)}
-        unknown = set(d) - field_map
+    def from_dict(cls, data: dict[str, Any]) -> "HyperConfig":
+        field_names = {field_def.name for field_def in fields(cls)}
+        unknown = set(data) - field_names
         if unknown:
             raise ValueError(f"unknown HyperConfig keys: {sorted(unknown)}")
-        return cls(**d)
+        return cls(**data)
 
     def save(self, path: str | Path) -> Path:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w") as f:
-            yaml.safe_dump(self.to_dict(), f, sort_keys=False, default_flow_style=False)
+        with path.open("w") as handle:
+            yaml.safe_dump(self.to_dict(), handle, sort_keys=False, default_flow_style=False)
         return path
 
     @classmethod
     def load(cls, path: str | Path) -> "HyperConfig":
-        with Path(path).open() as f:
-            return cls.from_dict(yaml.safe_load(f) or {})
+        with Path(path).open() as handle:
+            return cls.from_dict(yaml.safe_load(handle) or {})
 
 
 assert is_dataclass(HyperConfig)

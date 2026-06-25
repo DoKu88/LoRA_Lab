@@ -36,27 +36,27 @@ class RetrievalIndex:
                  payloads: dict[str, dict]):
         assert embeddings.dim() == 2 and embeddings.shape[0] == len(tasks)
         self.tasks = tasks
-        self.emb = normalize_embeddings(embeddings)  # (N, d), unit rows
+        self.embeddings = normalize_embeddings(embeddings)  # (N, d), unit rows
         self.payloads = payloads
 
     @classmethod
     def build(cls, items: dict[str, dict], encoder) -> "RetrievalIndex":
         """items: {task_name: {"description": str, ...payload}}."""
         tasks = list(items)
-        descriptions = [items[t]["description"] for t in tasks]
-        emb = encoder.encode(descriptions)
-        return cls(tasks, emb, {t: items[t] for t in tasks})
+        descriptions = [items[task]["description"] for task in tasks]
+        embeddings = encoder.encode(descriptions)
+        return cls(tasks, embeddings, {task: items[task] for task in tasks})
 
-    def query_embedding(self, emb: torch.Tensor, k: int = 1) -> list[Retrieved]:
-        q = normalize_embeddings(emb.view(1, -1))          # (1, d)
-        sims = (self.emb @ q.T).squeeze(1)                 # (N,)
-        k = min(k, len(self.tasks))
-        top = torch.topk(sims, k)
-        return [Retrieved(self.tasks[i], float(sims[i]), self.payloads[self.tasks[i]])
-                for i in top.indices.tolist()]
+    def query_embedding(self, embedding: torch.Tensor, top_k: int = 1) -> list[Retrieved]:
+        query_vec = normalize_embeddings(embedding.view(1, -1))   # (1, d)
+        similarities = (self.embeddings @ query_vec.T).squeeze(1)  # (N,)
+        top_k = min(top_k, len(self.tasks))
+        top = torch.topk(similarities, top_k)
+        return [Retrieved(self.tasks[index], float(similarities[index]), self.payloads[self.tasks[index]])
+                for index in top.indices.tolist()]
 
-    def query(self, description: str, encoder, k: int = 1) -> list[Retrieved]:
-        return self.query_embedding(encoder.encode([description]), k=k)
+    def query(self, description: str, encoder, top_k: int = 1) -> list[Retrieved]:
+        return self.query_embedding(encoder.encode([description]), top_k=top_k)
 
     def __len__(self) -> int:
         return len(self.tasks)

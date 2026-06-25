@@ -56,7 +56,7 @@ Train a **text-conditioned hypernetwork** that, in a **single forward pass**, ge
 
 **Logged at the eval/gate stage (S5):**
 - Per-task four-way scores (generated / oracle / base / retrieval) **plus the reconstruction-checkpoint scores (T5)**, per-axis margins, and the **gate verdict** as summary fields.
-- All tables **T1–T5** and figures **F1–F6** uploaded as W&B Tables / media (in addition to `results/phase2/`).
+- All tables **T1–T6** and figures **F1–F6** uploaded as W&B Tables / media (in addition to `results/phase2/`).
 
 **Artifacts (W&B Artifacts, versioned):**
 - Hypernetwork checkpoints (S3 warmup, S4 final), each linked to its producing config + run.
@@ -76,7 +76,7 @@ Train a **text-conditioned hypernetwork** that, in a **single forward pass**, ge
 
 ### 1. How much data are we training on?
 
-| Split | Tasks | Notes |
+| Split | Tasks (count) | Notes |
 |---|---|---|
 | **Train** | **~400** | Drawn broadly across all families from the **1,037 gate-passing** library tasks (564 generation + 473 classification). T2L used 479 — we match that order of magnitude. |
 | **Val** | **10** | Early-stop / checkpoint selection only. |
@@ -94,7 +94,7 @@ A **curated 30-task held-out set** built for three generalization axes where the
 retrieval baseline is *plausible but wrong* — so a pass is unambiguous (full
 analysis + per-axis table in the sizing-options doc):
 
-| Axis | Held-out picks | # | Why it proves generalization |
+| Axis | Held-out picks | # tasks | Why it proves generalization |
 |---|---|---|---|
 | **Format transfer** ⭐ | hold out the `*_answer_generation` form of datasets whose `*_classification` form is trained (31 paired datasets available) | 15 | retrieval lands on the same-topic, wrong-output-format LoRA → fails. |
 | **Language transfer** | hold out translation pairs unseen in that direction | 8 | retrieval returns a different-language LoRA → fails. |
@@ -114,7 +114,7 @@ rather than memorize a few tasks; it is the precondition for the held-out axes i
 
 ### 4. Training-time estimate (single 32 GB GPU)
 
-| Stage | Steps | Est. wall-clock | Notes |
+| Stage | Steps (count) | Est. wall-clock (min / hr) | Notes |
 |---|---|---|---|
 | Recon warmup (S3) | ~2,000 | **~20–30 min** | no base forward → cheap; scales with hypernet size. |
 | SFT meta-train (S4) | ~6,000 (batch 4) | **~5–7.5 hr** | base-backprop-bound (~3–4.5 s/step); independent of #tasks, scales with #steps. |
@@ -129,6 +129,7 @@ rather than memorize a few tasks; it is the precondition for the held-out axes i
 - **T3 — Hypernet size & memory**: param count + peak VRAM per parameterization (VeRA vs full), measured (replaces the predicted sizing-options table).
 - **T4 — Data-scale summary**: tasks & example-passes per split (the §1 numbers, as run).
 - **T5 — SFT-vs-reconstruction-vs-base held-out comparison**: per-held-out-task score for the **SFT-trained** hypernetwork vs the **reconstruction-trained (S3 warmup)** hypernetwork vs the **base** lower bound (oracle + retrieval as reference columns); margins SFT−reconstruction and SFT−base; aggregate + per-axis means. The project's *direct empirical test* of the SFT-over-reconstruction thesis (notes.md §C2; T2L §5.4 / Table 6) on **our** library — not just the asserted claim. `{csv,parquet,md}`.
+- **T6 — Cost comparison across the four methods**: **training time · trainable parameters · final training loss** for the four adapter methods of the SFT-vs-reconstruction comparison (SFT-generated / reconstruction-generated / oracle / base). Surfaces the cost story behind the thesis — both hypernetwork variants share one parameter footprint and emit an adapter in a single forward pass (differing only in objective + training time), while the oracle pays a fresh per-task LoRA run and base trains nothing. Losses are each method's *own* objective (SFT/oracle = token CE, reconstruction = L1 on ΔW) → not directly comparable in absolute terms. `{csv,parquet,md}`.
 
 **Figures**
 - **F1 — Generalization curve** (headline): score vs description-embedding distance to nearest train task, one line each for generated / retrieval / oracle / base. Generalization shows as generated staying high while retrieval decays with distance.
@@ -234,10 +235,11 @@ Each sprint lists: **(1) Goal · (2) Requirements · (3) Definition of done · (
    - For each held-out task: score generated-LoRA, oracle, base, retrieval on the held-out test split; tabulate (table **T1**).
    - **The gate:** generated mean score **> retrieval** mean score across the 30 held-out tasks (and clearly > base). Report per-task (T1), **per generalization axis** (format / language / domain — table **T2**, figure **F5**), and aggregate. Emit the **generalization curve** (F1, score vs distance-to-nearest-train) and the **generated-vs-retrieval scatter** (F2) as the headline evidence.
    - **Reconstruction-vs-SFT comparison (the thesis test).** Also load the **S3 reconstruction-warmup checkpoint** and evaluate it on the *same* held-out tasks (eval-only — no training, so the leakage contract is intact) head-to-head against the SFT hypernetwork and the base lower bound → table **T5**, figure **F6**. This is the empirical evidence for the project-defining "SFT, not reconstruction" decision (notes.md §C2; T2L §5.4 / Table 6): we expect reconstruction to sit near retrieval/base on held-out while SFT pulls clear. Report the SFT−reconstruction margin per task, per axis, and aggregate.
+   - **Cost comparison table (T6).** Assemble a **training-time / trainable-params / final-loss** table across these same four methods (SFT-generated, reconstruction-generated, oracle, base) — pulling training time + final loss from the S3/S4 W&B runs, param counts from S2/S4, and the oracle's per-task cost from Phase 1. Base trains nothing ("—"); flag that the losses are different objectives (SFT/oracle token CE vs reconstruction L1 on ΔW) and **not directly comparable** in absolute terms. This quantifies the amortization argument: one hypernetwork run serves all tasks vs a fresh oracle LoRA per task.
    - **Failure-mode analysis (§A.12):** where generated loses, is it bad task *identification* (retrieval would've picked a better adapter → an encoder/conditioning problem) or bad *execution* (right intent, weak weights → an output-parameterization/training problem)? This decides what to fix.
-   - **W&B:** log the four-way per-task scores, per-axis margins, and the **gate verdict** as W&B summary fields, and upload tables **T1–T5** + figures **F1–F6** as W&B Tables / media (per the [tracking contract](#wb-experiment-tracking--log-everything)) — the gate result **and the SFT-vs-reconstruction comparison** live in W&B, not only in the findings doc.
-3. **Definition of done:** the four-way held-out table is committed; the gate verdict (pass/fail) is stated with the margin; if it fails, the failure-mode analysis points to the specific fix (per notes.md: smaller VeRA target §2.4, DoRA §2.3, or better distillation) **before** any Phase-3 work; **table T5 + figure F6 (SFT vs reconstruction vs base) are committed with the SFT−reconstruction margin stated; the four-way per-task scores, per-axis margins, and the gate verdict are logged as W&B summary fields, and tables T1–T5 + figures F1–F6 are uploaded as W&B Tables / media.** **Claude then notifies the user to confirm the tables/figures + gate verdict on the W&B website.**
-4. **Required testing:** all four conditions eval'd on the *identical* held-out split (same split hash as Phase 1); retrieval never retrieves a held-out task (train-split index only); generated and oracle adapters share the exact LoRA shape (Phase-3 comparability); the gate comparison is computed over the same task set for all conditions; **the reconstruction (S3) checkpoint is eval'd on the identical held-out split as the SFT checkpoint (same metric + harness), and T5 has all of {SFT, reconstruction, base} for every held-out task (no missing cell); assert the gate verdict + all four condition scores are present in the W&B run summary, and every table (T1–T5) and figure (F1–F6) was uploaded (no missing artifact).**
+   - **W&B:** log the four-way per-task scores, per-axis margins, and the **gate verdict** as W&B summary fields, and upload tables **T1–T6** + figures **F1–F6** as W&B Tables / media (per the [tracking contract](#wb-experiment-tracking--log-everything)) — the gate result **and the SFT-vs-reconstruction comparison** live in W&B, not only in the findings doc.
+3. **Definition of done:** the four-way held-out table is committed; the gate verdict (pass/fail) is stated with the margin; if it fails, the failure-mode analysis points to the specific fix (per notes.md: smaller VeRA target §2.4, DoRA §2.3, or better distillation) **before** any Phase-3 work; **table T5 + figure F6 (SFT vs reconstruction vs base) and the T6 cost comparison (training time / params / loss across the four methods) are committed, with the SFT−reconstruction margin stated; the four-way per-task scores, per-axis margins, and the gate verdict are logged as W&B summary fields, and tables T1–T6 + figures F1–F6 are uploaded as W&B Tables / media.** **Claude then notifies the user to confirm the tables/figures + gate verdict on the W&B website.**
+4. **Required testing:** all four conditions eval'd on the *identical* held-out split (same split hash as Phase 1); retrieval never retrieves a held-out task (train-split index only); generated and oracle adapters share the exact LoRA shape (Phase-3 comparability); the gate comparison is computed over the same task set for all conditions; **the reconstruction (S3) checkpoint is eval'd on the identical held-out split as the SFT checkpoint (same metric + harness), and T5 has all of {SFT, reconstruction, base} for every held-out task (no missing cell); **T6 has training-time + params + loss for all four methods (base's training cells are "—", not blank);** assert the gate verdict + all four condition scores are present in the W&B run summary, and every table (T1–T6) and figure (F1–F6) was uploaded (no missing artifact).**
 
 ### Sprint 6 — Findings, ablations entry & artifact  *(needs S5)*
 
@@ -245,7 +247,7 @@ Each sprint lists: **(1) Goal · (2) Requirements · (3) Definition of done · (
 
 1. **Goal:** Write up Phase 2 and stage the ablation knobs Phase 4 will sweep.
 2. **Requirements:**
-   - `docs/phase-2-findings.md`: architecture, output parameterization (and why), the SFT memory profile, and the full output set — tables **T1–T5** and figures **F1–F6** (see the Phase-2 run spec §5) — plus the failure-mode verdict and the recommendation.
+   - `docs/phase-2-findings.md`: architecture, output parameterization (and why), the SFT memory profile, and the full output set — tables **T1–T6** and figures **F1–F6** (see the Phase-2 run spec §5) — plus the failure-mode verdict and the recommendation.
    - Record the cheap ablation axes for later (rank, #train tasks, seed) — wire them as config knobs now even if not swept until Phase 4.
    - Versioned hypernetwork checkpoint + the exact configs to reproduce it; W&B report (best-effort).
 3. **Definition of done:** findings committed; gate verdict + reproducibility recipe documented; ablation knobs exposed in `configs/phase2/`; **the W&B report is generated (best-effort) and linked from `docs/phase-2-findings.md`, referencing the S3/S4 runs + checkpoint Artifacts.** **Claude then notifies the user to confirm the report renders on the W&B website.**
@@ -310,13 +312,13 @@ Concretely, the gate clears when: **(1)** the SFT-trained hypernetwork generates
 
 ## Proposed Figures & Tables
 
-> ⚠️ **All numbers below are illustrative placeholders** — hand-picked synthetic values that show each artifact's **schema, columns, and expected shape**, not results. They encode the *expected story* (oracle ≥ SFT-generated > retrieval ≫ base; reconstruction stuck near base) so the layout reads correctly before real data exists. Scores are a held-out test metric (EM or ROUGE-L, 0–100), reusing the Phase-1 eval harness.
+> ⚠️ **All numbers below are illustrative placeholders** — hand-picked synthetic values that show each artifact's **schema, columns, and expected shape**, not results. They encode the *expected story* (oracle ≥ SFT-generated > retrieval ≫ base; reconstruction stuck near base) so the layout reads correctly before real data exists. Scores are a held-out test metric (EM or ROUGE-L, 0–100 — abbreviated **pts** in column headers; Δ values are differences in pts), reusing the Phase-1 eval harness.
 
 ### T1 — Four-way held-out gate table *(primary)*
 
 One row per held-out task; the gate is decided on the **aggregate** `Δ vs retrieval` row. `Δ vs retr` = generated − retrieval; `Δ vs base` = generated − base.
 
-| Held-out task | Axis | Generated (SFT) | Oracle | Base | Retrieval | Δ vs retr | Δ vs base | Verdict |
+| Held-out task | Axis | Generated SFT (pts) | Oracle (pts) | Base (pts) | Retrieval (pts) | Δ vs retr (pts) | Δ vs base (pts) | Verdict |
 |---|---|--:|--:|--:|--:|--:|--:|:--:|
 | task893_quail_answer_gen | format | 63.2 | 70.1 | 39.8 | 45.0 | **+18.2** | +23.4 | ✅ |
 | task1564_triviaqa_answer_gen | format | 58.7 | 66.4 | 41.2 | 47.9 | **+10.8** | +17.5 | ✅ |
@@ -333,7 +335,7 @@ One row per held-out task; the gate is decided on the **aggregate** `Δ vs retri
 
 Aggregates T1 by generalization axis; the per-axis verdict surfaces *where* generalization holds.
 
-| Axis | n | Generated | Oracle | Base | Retrieval | Δ vs retr | Verdict |
+| Axis | n (tasks) | Generated (pts) | Oracle (pts) | Base (pts) | Retrieval (pts) | Δ vs retr (pts) | Verdict |
 |---|--:|--:|--:|--:|--:|--:|:--:|
 | Format transfer ⭐ | 15 | 61.5 | 69.2 | 40.3 | 46.1 | **+15.4** | ✅ |
 | Language transfer | 8 | 53.8 | 60.5 | 34.6 | 48.9 | **+4.9** | ✅ |
@@ -344,15 +346,15 @@ Aggregates T1 by generalization axis; the per-axis verdict surfaces *where* gene
 
 ### T3 — Hypernet size & memory *(measured in S2/S4)*
 
-| Output parameterization | Hypernet params | Output / task | Peak VRAM (S4) | Notes |
+| Output parameterization | Hypernet params (M) | Output / task (params) | Peak VRAM, S4 (GB) | Notes |
 |---|--:|--:|--:|---|
-| **VeRA-style** *(default)* | 4.8 M | ~0.05 M (B + scales) | 24.6 GB | fits with headroom |
-| Low-rank factored heads | 11.2 M | full A/B (r=16) | 28.1 GB | fallback (b) |
-| Full A/B (T2L-L) | 32.5 M | full A/B dense | 31.4 GB | OOM-risk → throttle batch |
+| **VeRA-style** *(default)* | 4.8 | ~0.05 M (B + scales) | 24.6 | fits with headroom |
+| Low-rank factored heads | 11.2 | full A/B (r=16) | 28.1 | fallback (b) |
+| Full A/B (T2L-L) | 32.5 | full A/B dense | 31.4 | OOM-risk → throttle batch |
 
 ### T4 — Data-scale summary *(as run)*
 
-| Split | Tasks | Example-passes | Steps |
+| Split | Tasks (count) | Example-passes (count) | Steps (count) |
 |---|--:|--:|--:|
 | Train — SFT (S4) | ~400 | 24,000 | 6,000 |
 | Train — reconstruction (S3) | ~400 | — (no base fwd) | 2,000 |
@@ -363,7 +365,7 @@ Aggregates T1 by generalization axis; the per-axis verdict surfaces *where* gene
 
 Same held-out tasks, three conditions side-by-side (oracle + retrieval as reference). `Δ SFT−recon` is the headline number: the value of the SFT objective over a pure reconstruction-trained generator.
 
-| Held-out task | Axis | SFT | Recon | Base | Oracle | Retr | Δ SFT−recon | Δ SFT−base |
+| Held-out task | Axis | SFT (pts) | Recon (pts) | Base (pts) | Oracle (pts) | Retr (pts) | Δ SFT−recon (pts) | Δ SFT−base (pts) |
 |---|---|--:|--:|--:|--:|--:|--:|--:|
 | task893_quail_answer_gen | format | 63.2 | 44.1 | 39.8 | 70.1 | 45.0 | **+19.1** | +23.4 |
 | task645_en→es_translation | language | 51.3 | 38.0 | 33.1 | 59.8 | 40.2 | **+13.3** | +18.2 |
@@ -373,6 +375,19 @@ Same held-out tasks, three conditions side-by-side (oracle + retrieval as refere
 
 *Reading it:* reconstruction (47.6) lands just above **base** (42.4) and *below* **retrieval** (55.2) on held-out — it memorized weight-space copies and didn't generalize — while **SFT** (63.8) clears everything. That **+16.2** gap is the project's own evidence for "SFT, not reconstruction."
 
+### T6 — Cost comparison across the four methods
+
+Training cost & footprint for the four adapter methods in the SFT-vs-reconstruction comparison. Both hypernetwork rows share **one** 4.8 M-param model and emit an adapter in a single forward pass — only the **objective + training time** differ. The oracle pays a fresh 9.4 M-param LoRA run *per task*; base trains nothing.
+
+| Method | Adapter produced via | Training time (wall-clock) | Trainable params (count) | Final training loss (native objective units) | Per-task inference (latency) |
+|---|---|--:|--:|--:|:--|
+| SFT-generated (hypernetwork) | 1 hypernet forward | ~5–7.5 hr · one-time, amortized over all tasks | 4.8 M (VeRA) | token CE ≈ 1.12 (`sft/loss`) | ~1 forward (ms) |
+| Reconstruction-generated (hypernetwork) | 1 hypernet forward | ~20–30 min · one-time | 4.8 M (VeRA) | L1 on ΔW ≈ 2.4e-4 (`recon/loss`) | ~1 forward (ms) |
+| Oracle (per-task LoRA) | train a LoRA per task | ~15 min/task × N tasks (Phase 1) | 9.4 M per adapter | token CE ≈ 0.78 | — (pre-trained; not zero-shot) |
+| Base (no adapter) | — | — | 0 | — | — |
+
+> **Loss caveat:** the loss column lists each method's *own* training objective — SFT and oracle minimize token cross-entropy, reconstruction minimizes L1 on the weight delta — so the absolute values are **not directly comparable**. The table's real point is the **training-time + parameter** asymmetry: one amortized 4.8 M hypernetwork run that generalizes, vs a 9.4 M oracle run *per task* that doesn't transfer.
+
 ---
 
 ### F1 — Generalization curve *(headline)*
@@ -380,13 +395,13 @@ Same held-out tasks, three conditions side-by-side (oracle + retrieval as refere
 Score vs description-embedding distance to nearest train task. Generalization = generated stays high while **retrieval decays** with distance.
 
 ```
-score
+score (pts, 0–100)
  75│ O    O    O    O    O    O          O = Oracle      (upper bound)
  65│ G    G    G    G    G    G          G = Generated    (SFT — holds up)
  55│ R    R    R                         R = Retrieval    (decays w/ distance)
  45│           ·    R    R    R
  42│ b    b    b    b    b    b          b = Base         (flat lower bound)
-   └────┬────┬────┬────┬────┬────┬──► distance to nearest train task
+   └────┬────┬────┬────┬────┬────┬──► distance to nearest train task (cosine dist, 0–1)
        near                       far
 ```
 
@@ -395,14 +410,14 @@ score
 One point per held-out task. Above the diagonal = generated beats retrieval (a win). Points below = losses (e.g. financial_phrasebank).
 
 ```
-generated
+generated (pts)
  70│                  •  •   ⟋
  65│              • • •    ⟋
  60│           •  • •   ⟋          ⟋ = y = x  (diagonal)
  55│        • • •    ⟋
  50│      • •     ⟋   ●  ← below diagonal = retrieval wins (1–2 tasks)
  45│          ⟋
-   └────┬────┬────┬────┬────┬──► retrieval
+   └────┬────┬────┬────┬────┬──► retrieval (pts)
        40   50   55   60   70
 ```
 
@@ -411,14 +426,14 @@ generated
 Reconstruction warmup (S3) then SFT meta-train (S4, warm-started from it).
 
 ```
-loss
+loss (objective units: CE in nats / L1)
  │•                         recon/loss (S3, 0–2k steps)
  │ ••                       sft/loss   (S4, 0–6k steps)
  │   •••___
  │         ••••____  ← warm-start hand-off (S3 ckpt → S4)
  │  sft:        •••••••__________
  │                            •••••••••______
- └────┬─────┬─────┬─────┬─────┬─────┬──► step
+ └────┬─────┬─────┬─────┬─────┬─────┬──► step (count)
       0    1k    2k    3k    4.5k   6k
 ```
 
@@ -427,7 +442,7 @@ loss
 Where the backprop-through-base path peaks; must stay under 32 GB.
 
 ```
-phase           GB   |0      8      16      24    32|
+phase   peak VRAM(GB)|0      8      16      24    32|
 generate ΔW    9.2   ███▍
 apply adapter  9.8   ███▋
 base fwd+ckpt 18.4   ███████▎
@@ -441,7 +456,7 @@ optim step    21.0   ████████▍
 Mean margin vs retrieval and vs base, per axis (positive vs retrieval = generalizing there).
 
 ```
-axis        Δ vs retrieval          Δ vs base
+axis        Δ vs retrieval (pts)    Δ vs base (pts)
 Format      +15.4 ██████▏           +21.2 ████████▌
 Language     +4.9 ██▏               +19.2 ███████▋
 Domain       +0.2 ▏                 +15.2 ██████
@@ -453,7 +468,7 @@ Aggregate    +8.6 ███▌              +21.4 ████████▌
 Paired bars per axis + aggregate; the visual of "SFT generalizes, reconstruction doesn't."
 
 ```
-axis        SFT             Recon           Base
+axis        SFT (pts)       Recon (pts)     Base (pts)
 Format     61.5 ██████▏     45.0 ████▌      40.3 ████
 Language   53.8 █████▍      39.5 ███▉       34.6 ███▍
 Domain     64.2 ██████▍     50.0 █████      49.0 ████▉

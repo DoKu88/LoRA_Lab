@@ -27,24 +27,25 @@ _PEFT_PREFIX = "base_model.model."
 
 
 def _base_key(peft_key: str, suffix: str) -> str:
-    k = peft_key[len(_PEFT_PREFIX):] if peft_key.startswith(_PEFT_PREFIX) else peft_key
-    return k[: -len("." + suffix)]
+    stripped = peft_key[len(_PEFT_PREFIX):] if peft_key.startswith(_PEFT_PREFIX) else peft_key
+    return stripped[: -len("." + suffix)]
 
 
-def parse_lora_state_dict(sd: dict[str, torch.Tensor]) -> dict[str, tuple[torch.Tensor, torch.Tensor]]:
-    """{peft_key: tensor} -> {base_module_key: (A:(r,in), B:(out,r))}.
+def parse_lora_state_dict(state_dict: dict[str, torch.Tensor]) -> dict[str, tuple[torch.Tensor, torch.Tensor]]:
+    """{peft_key: tensor} -> {base_module_key: (A:(rank,in), B:(out,rank))}.
 
     Keys come out matching the base model's ``named_modules`` paths (e.g.
     ``model.layers.0.self_attn.q_proj``), so they align 1:1 with the keys the
     HyperLoRAGenerator produces from ``target_specs``.
     """
-    halves: dict[str, dict[str, torch.Tensor]] = {}
-    for k, v in sd.items():
-        if k.endswith("lora_A.weight"):
-            halves.setdefault(_base_key(k, "lora_A.weight"), {})["A"] = v
-        elif k.endswith("lora_B.weight"):
-            halves.setdefault(_base_key(k, "lora_B.weight"), {})["B"] = v
-    return {base: (ab["A"], ab["B"]) for base, ab in halves.items() if "A" in ab and "B" in ab}
+    factor_pairs: dict[str, dict[str, torch.Tensor]] = {}
+    for key, tensor in state_dict.items():
+        if key.endswith("lora_A.weight"):
+            factor_pairs.setdefault(_base_key(key, "lora_A.weight"), {})["A"] = tensor
+        elif key.endswith("lora_B.weight"):
+            factor_pairs.setdefault(_base_key(key, "lora_B.weight"), {})["B"] = tensor
+    return {base: (factors["A"], factors["B"])
+            for base, factors in factor_pairs.items() if "A" in factors and "B" in factors}
 
 
 def _load_split_train(split_path: str | Path) -> list[str]:
@@ -63,11 +64,11 @@ class LibraryReconSampler:
     def __init__(self, split_path: str | Path, library_path: str | Path,
                  *, seed: int = 0):
         train = _load_split_train(split_path)
-        lib = _load_library(library_path)
+        library = _load_library(library_path)
         # keep only train tasks that have an adapter + description recorded
-        self.tasks = [t for t in train if t in lib and lib[t].get("adapter_repo")
-                      and lib[t].get("description")]
-        self.lib = lib
+        self.tasks = [task for task in train if task in library and library[task].get("adapter_repo")
+                      and library[task].get("description")]
+        self.library = library
         self.rng = random.Random(seed)
         self._cache: dict[str, dict] = {}
 
@@ -76,13 +77,13 @@ class LibraryReconSampler:
             from huggingface_hub import hf_hub_download
             from safetensors.torch import load_file
 
-            path = hf_hub_download(self.lib[task]["adapter_repo"], "adapter_model.safetensors")
+            path = hf_hub_download(self.library[task]["adapter_repo"], "adapter_model.safetensors")
             self._cache[task] = parse_lora_state_dict(load_file(path))
         return self._cache[task]
 
     def sample(self) -> tuple[str, dict]:
         task = self.rng.choice(self.tasks)
-        return self.lib[task]["description"], self._load_adapter(task)
+        return self.library[task]["description"], self._load_adapter(task)
 
     def __len__(self) -> int:
         return len(self.tasks)
@@ -100,27 +101,27 @@ class SNISFTSampler:
         from ..data.sni import DataCollatorForSupervised, TaskSpec, get_dataset
 
         train = _load_split_train(split_path)
-        lib = _load_library(library_path)
-        self.tok = tokenizer
+        library = _load_library(library_path)
+        self.tokenizer = tokenizer
         self.collate = DataCollatorForSupervised(tokenizer)
         self.batch_size = batch_size
         self.rng = random.Random(seed)
-        self.tasks, self._bundles, self.lib = [], {}, lib
-        for t in train:
-            spec = lib.get(t)
+        self.tasks, self._bundles, self.library = [], {}, library
+        for task in train:
+            spec = library.get(task)
             if not (spec and spec.get("dataset_repo") and spec.get("description")):
                 continue
-            ts = TaskSpec(name=t, hf_repo=spec["dataset_repo"],
-                          kind=spec.get("kind", "generation"),
-                          metric=spec.get("metric", "rougeL"), description=spec["description"])
-            self._bundles[t] = get_dataset(ts, tokenizer, max_seq_len=max_seq_len)
-            self.tasks.append(t)
+            task_spec = TaskSpec(name=task, hf_repo=spec["dataset_repo"],
+                                 kind=spec.get("kind", "generation"),
+                                 metric=spec.get("metric", "rougeL"), description=spec["description"])
+            self._bundles[task] = get_dataset(task_spec, tokenizer, max_seq_len=max_seq_len)
+            self.tasks.append(task)
 
     def sample(self) -> tuple[str, dict]:
         task = self.rng.choice(self.tasks)
         train = self._bundles[task].train
         picks = [self.rng.choice(train) for _ in range(min(self.batch_size, len(train)))]
-        return self.lib[task]["description"], self.collate(picks)
+        return self.library[task]["description"], self.collate(picks)
 
     def __len__(self) -> int:
         return len(self.tasks)

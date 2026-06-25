@@ -2,14 +2,15 @@
 
 The output dimensionality is the single biggest lever on hypernetwork size and
 trainability (notes.md §A.2). Each head maps a per-target conditioning vector
-``h`` (task embedding ⊕ layer/module embedding) to factors ``A:(r,in)``,
-``B:(out,r)`` for one target Linear. Three options, smallest-output first — the
-S2 decision picks the smallest that clears the gate (with a documented ladder):
+``conditioning`` (task embedding ⊕ layer/module embedding) to factors
+``A:(rank,in)``, ``B:(out,rank)`` for one target Linear. Three options,
+smallest-output first — the S2 decision picks the smallest that clears the gate
+(with a documented ladder):
 
   VeRAHead       frozen random A shared per target; generate only small per-rank
                  scaling vectors + B (VeRA-style, §2.4). Smallest output.
-  LowRankABHead  generate A and B through a low-rank bottleneck (k ≪ in,out), so
-                 the head weight is O(k·(in+out)) not O(r·(in+out)·d_cond).
+  LowRankABHead  generate A and B through a low-rank bottleneck (bottleneck_dim ≪
+                 in,out), so the head weight is O(bottleneck_dim·(in+out)).
   FullABHead     dense heads emit A and B directly (the T2L default). Largest.
 
 All heads zero-init the B path so ΔW = 0 at start (the no-op invariant the S1
@@ -24,86 +25,88 @@ import torch.nn as nn
 
 
 class FullABHead(nn.Module):
-    """Dense: h -> A (r·in) and B (out·r). Largest output; T2L default."""
+    """Dense: conditioning -> A (rank·in) and B (out·rank). Largest output; T2L default."""
 
-    def __init__(self, d_cond: int, in_f: int, out_f: int, r: int):
+    def __init__(self, cond_dim: int, in_features: int, out_features: int, rank: int):
         super().__init__()
-        self.in_f, self.out_f, self.r = in_f, out_f, r
-        self.A = nn.Linear(d_cond, r * in_f)
-        self.B = nn.Linear(d_cond, out_f * r)
-        nn.init.zeros_(self.B.weight)
-        nn.init.zeros_(self.B.bias)
+        self.in_features, self.out_features, self.rank = in_features, out_features, rank
+        self.a_head = nn.Linear(cond_dim, rank * in_features)
+        self.b_head = nn.Linear(cond_dim, out_features * rank)
+        nn.init.zeros_(self.b_head.weight)
+        nn.init.zeros_(self.b_head.bias)
 
-    def forward(self, h: torch.Tensor):
-        a = self.A(h).view(self.r, self.in_f)
-        b = self.B(h).view(self.out_f, self.r)
-        return a, b
+    def forward(self, conditioning: torch.Tensor):
+        lora_a = self.a_head(conditioning).view(self.rank, self.in_features)
+        lora_b = self.b_head(conditioning).view(self.out_features, self.rank)
+        return lora_a, lora_b
 
 
 class LowRankABHead(nn.Module):
-    """Low-rank: h -> a k-dim code -> A, B via fixed factor banks.
+    """Low-rank: conditioning -> a bottleneck code -> A, B via fixed factor banks.
 
-    The generated A = Wa_out @ diag(code_a) @ Wa_in-style bottleneck keeps the
-    *learned* head small: O(k·(in+out)) instead of O(d_cond·r·(in+out)).
+    The generated A = a_from_code(code), B = b_from_code(code) keep the *learned*
+    head small: O(bottleneck_dim·(in+out)) instead of O(cond_dim·rank·(in+out)).
     """
 
-    def __init__(self, d_cond: int, in_f: int, out_f: int, r: int, k: int = 16):
+    def __init__(self, cond_dim: int, in_features: int, out_features: int, rank: int,
+                 bottleneck_dim: int = 16):
         super().__init__()
-        self.in_f, self.out_f, self.r, self.k = in_f, out_f, r, k
-        self.code = nn.Linear(d_cond, k)
-        self.A_from_code = nn.Linear(k, r * in_f, bias=False)
-        self.B_from_code = nn.Linear(k, out_f * r, bias=False)
-        nn.init.zeros_(self.B_from_code.weight)
+        self.in_features, self.out_features, self.rank = in_features, out_features, rank
+        self.bottleneck_dim = bottleneck_dim
+        self.code = nn.Linear(cond_dim, bottleneck_dim)
+        self.a_from_code = nn.Linear(bottleneck_dim, rank * in_features, bias=False)
+        self.b_from_code = nn.Linear(bottleneck_dim, out_features * rank, bias=False)
+        nn.init.zeros_(self.b_from_code.weight)
 
-    def forward(self, h: torch.Tensor):
-        c = torch.tanh(self.code(h))
-        a = self.A_from_code(c).view(self.r, self.in_f)
-        b = self.B_from_code(c).view(self.out_f, self.r)
-        return a, b
+    def forward(self, conditioning: torch.Tensor):
+        code = torch.tanh(self.code(conditioning))
+        lora_a = self.a_from_code(code).view(self.rank, self.in_features)
+        lora_b = self.b_from_code(code).view(self.out_features, self.rank)
+        return lora_a, lora_b
 
 
 class VeRAHead(nn.Module):
     """VeRA-style (§2.4): BOTH A and B are frozen random buffers; the head
     generates only the two scaling vectors.
 
-    ΔW = scaling · (Λ_b B)(Λ_d A) with Λ_d = diag(d):(r), Λ_b = diag(b):(out).
+    ΔW = scaling · (Λ_b B)(Λ_d A) with Λ_d = diag(d):(rank), Λ_b = diag(b):(out).
     We fold the scalings into the returned factors — A_eff = A ⊙ d (per-row),
     B_eff = B ⊙ b (per-row) — so the (A, B) interface is unchanged. The only
-    learned output is (r + out) per target, so the head is O(d_cond·(r+out)) —
-    far smaller than generating a dense B. b is zero-init => ΔW = 0 at start.
+    learned output is (rank + out) per target, so the head is O(cond_dim·(rank+out))
+    — far smaller than generating a dense B. b is zero-init => ΔW = 0 at start.
     """
 
-    def __init__(self, d_cond: int, in_f: int, out_f: int, r: int):
+    def __init__(self, cond_dim: int, in_features: int, out_features: int, rank: int):
         super().__init__()
-        self.in_f, self.out_f, self.r = in_f, out_f, r
-        self.register_buffer("A_frozen", torch.randn(r, in_f) / (in_f ** 0.5))
-        self.register_buffer("B_frozen", torch.randn(out_f, r) / (r ** 0.5))
-        self.d_scale = nn.Linear(d_cond, r)        # per-rank scale on A
-        self.b_scale = nn.Linear(d_cond, out_f)    # per-output scale on B
+        self.in_features, self.out_features, self.rank = in_features, out_features, rank
+        self.register_buffer("frozen_a", torch.randn(rank, in_features) / (in_features ** 0.5))
+        self.register_buffer("frozen_b", torch.randn(out_features, rank) / (rank ** 0.5))
+        self.d_scale = nn.Linear(cond_dim, rank)             # per-rank scale on A
+        self.b_scale = nn.Linear(cond_dim, out_features)     # per-output scale on B
         nn.init.ones_(self.d_scale.bias)
         nn.init.zeros_(self.b_scale.weight)
-        nn.init.zeros_(self.b_scale.bias)          # b=0 => ΔW=0 at init
+        nn.init.zeros_(self.b_scale.bias)                  # b=0 => ΔW=0 at init
 
-    def forward(self, h: torch.Tensor):
-        a = self.A_frozen * self.d_scale(h).view(self.r, 1)
-        b = self.B_frozen * self.b_scale(h).view(self.out_f, 1)
-        return a, b
+    def forward(self, conditioning: torch.Tensor):
+        lora_a = self.frozen_a * self.d_scale(conditioning).view(self.rank, 1)
+        lora_b = self.frozen_b * self.b_scale(conditioning).view(self.out_features, 1)
+        return lora_a, lora_b
 
 
 HEADS = {"full": FullABHead, "lowrank": LowRankABHead, "vera": VeRAHead}
 
 
 def estimate_params(parameterization: str, target_specs: dict[str, tuple[int, int]],
-                    d_cond: int, r: int, **kw) -> int:
+                    cond_dim: int, rank: int, **head_kwargs) -> int:
     """Total *learned* hypernetwork params if each target gets its own head.
 
     Drives the S2 choice: e.g. for Mistral-7B (q/k/v over 32 layers) the Full
     parameterization is far larger than VeRA — this quantifies the gap before we
     commit a training run.
     """
-    cls = HEADS[parameterization]
+    head_cls = HEADS[parameterization]
     total = 0
-    for in_f, out_f in target_specs.values():
-        head = cls(d_cond, in_f, out_f, r, **kw)
-        total += sum(p.numel() for p in head.parameters())
+    for in_features, out_features in target_specs.values():
+        head = head_cls(cond_dim, in_features, out_features, rank, **head_kwargs)
+        total += sum(param.numel() for param in head.parameters())
     return total

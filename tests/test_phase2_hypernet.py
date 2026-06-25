@@ -40,7 +40,7 @@ class _TinyModel(nn.Module):
 
 
 TARGETS = ["q_proj", "v_proj"]
-D_TASK = 8
+TASK_DIM = 8
 
 
 def _setup(d=24, n=2):
@@ -48,7 +48,7 @@ def _setup(d=24, n=2):
     for p in model.parameters():
         p.requires_grad_(False)  # base frozen
     specs = target_specs(model, TARGETS)
-    hyper = HyperLoRA(specs, d_task=D_TASK, r=4, alpha=8)
+    hyper = HyperLoRA(specs, task_dim=TASK_DIM, rank=4, alpha=8)
     return model, specs, hyper
 
 
@@ -61,7 +61,7 @@ def test_target_specs_shapes():
 
 def test_generated_shapes():
     _, specs, hyper = _setup()
-    adapter = hyper(torch.randn(D_TASK))
+    adapter = hyper(torch.randn(TASK_DIM))
     assert set(adapter) == set(specs)
     for key, (a, b) in adapter.items():
         in_f, out_f = specs[key]
@@ -70,12 +70,12 @@ def test_generated_shapes():
 
 
 def test_noop_adapter_leaves_logits_unchanged():
-    """B0 is zero-init => ΔW = 0 => injected forward == base forward."""
+    """base_b is zero-init => ΔW = 0 => injected forward == base forward."""
     model, _, hyper = _setup()
     x = torch.randn(3, 5, 24)
     base_out = model(x)
     reg = LoRARegistry()
-    reg.set_adapter(hyper(torch.randn(D_TASK)))
+    reg.set_adapter(hyper(torch.randn(TASK_DIM)))
     with lora_injected(model, TARGETS, reg, scaling=hyper.scaling):
         inj_out = model(x)
     assert torch.allclose(base_out, inj_out, atol=1e-6)
@@ -85,7 +85,7 @@ def test_grads_reach_hypernetwork():
     model, _, hyper = _setup()
     x = torch.randn(2, 4, 24)
     reg = LoRARegistry()
-    reg.set_adapter(hyper(torch.randn(D_TASK)))
+    reg.set_adapter(hyper(torch.randn(TASK_DIM)))
     with lora_injected(model, TARGETS, reg, scaling=hyper.scaling):
         out = model(x)
     out.pow(2).mean().backward()
@@ -95,14 +95,14 @@ def test_grads_reach_hypernetwork():
 
 
 def test_conditioning_mechanism():
-    """With a non-degenerate gate + B0, two task embeddings -> different ΔW."""
+    """With a non-degenerate gate + base_b, two task embeddings -> different ΔW."""
     _, specs, hyper = _setup()
     with torch.no_grad():
-        for p in hyper.B0.values():
+        for p in hyper.base_b.values():
             p.copy_(torch.randn_like(p) * 0.1)
         hyper.gate.weight.copy_(torch.randn_like(hyper.gate.weight) * 0.5)
-    a1 = hyper(torch.randn(D_TASK))
-    a2 = hyper(torch.randn(D_TASK))
+    a1 = hyper(torch.randn(TASK_DIM))
+    a2 = hyper(torch.randn(TASK_DIM))
     k = next(iter(specs))
     dw1 = delta_w(*a1[k], hyper.scaling)
     dw2 = delta_w(*a2[k], hyper.scaling)
@@ -114,7 +114,7 @@ def test_reconstruction_overfit_decreases():
     _, specs, hyper = _setup()
     torch.manual_seed(1)
     target = {k: (torch.randn(4, specs[k][0]), torch.randn(specs[k][1], 4)) for k in specs}
-    task_emb = torch.randn(D_TASK)
+    task_emb = torch.randn(TASK_DIM)
     opt = torch.optim.Adam(hyper.parameters(), lr=1e-2)
     losses = []
     for _ in range(60):
@@ -129,9 +129,9 @@ def test_reconstruction_overfit_decreases():
 # ---- Sprint 2: output-parameterization heads ------------------------------
 @pytest.mark.parametrize("name", ["full", "lowrank", "vera"])
 def test_head_shapes_and_noop(name):
-    d_cond, in_f, out_f, r = 32, 48, 40, 8
-    head = HEADS[name](d_cond, in_f, out_f, r)
-    a, b = head(torch.randn(d_cond))
+    cond_dim, in_f, out_f, r = 32, 48, 40, 8
+    head = HEADS[name](cond_dim, in_f, out_f, r)
+    a, b = head(torch.randn(cond_dim))
     assert a.shape == (r, in_f) and b.shape == (out_f, r)
     # B path is zero-init for every parameterization => ΔW == 0 at init
     assert torch.allclose(b @ a, torch.zeros(out_f, in_f), atol=1e-6)
@@ -144,10 +144,10 @@ def test_head_param_budget_ordering():
         specs[f"l{layer}.q"] = (4096, 4096)
         specs[f"l{layer}.k"] = (4096, 1024)
         specs[f"l{layer}.v"] = (4096, 1024)
-    d_cond, r = 64, 16
-    vera = estimate_params("vera", specs, d_cond, r)
-    lowrank = estimate_params("lowrank", specs, d_cond, r)
-    full = estimate_params("full", specs, d_cond, r)
+    cond_dim, r = 64, 16
+    vera = estimate_params("vera", specs, cond_dim, r)
+    lowrank = estimate_params("lowrank", specs, cond_dim, r)
+    full = estimate_params("full", specs, cond_dim, r)
     # smallest-output ordering the S2 ladder assumes
     assert vera < lowrank < full
 
@@ -197,7 +197,7 @@ def test_retrieval_scores_sorted():
     train = {f"t{i}": {"description": d} for i, d in
              enumerate(["sentiment", "entailment", "translation"])}
     idx = RetrievalIndex.build(train, enc)
-    res = idx.query("sentiment polarity", enc, k=3)
+    res = idx.query("sentiment polarity", enc, top_k=3)
     scores = [r.score for r in res]
     assert scores == sorted(scores, reverse=True)
 
@@ -209,7 +209,7 @@ def _gen_setup(param="vera", d=24, n=2):
     for p in model.parameters():
         p.requires_grad_(False)
     specs = target_specs(model, TARGETS)
-    gen = HyperLoRAGenerator(specs, d_task=D_TASK, r=4, alpha=8, parameterization=param,
+    gen = HyperLoRAGenerator(specs, task_dim=TASK_DIM, rank=4, alpha=8, parameterization=param,
                              trunk_hidden=32)
     return model, specs, gen
 
@@ -217,7 +217,7 @@ def _gen_setup(param="vera", d=24, n=2):
 @pytest.mark.parametrize("param", ["vera", "lowrank", "full"])
 def test_generator_shapes_and_noop(param):
     model, specs, gen = _gen_setup(param)
-    adapter = gen(torch.randn(D_TASK))
+    adapter = gen(torch.randn(TASK_DIM))
     assert set(adapter) == set(specs)
     for key, (a, b) in adapter.items():
         in_f, out_f = specs[key]
@@ -228,8 +228,8 @@ def test_generator_shapes_and_noop(param):
 def test_generator_conditions_on_task():
     """Different task embeddings -> different generated factors (A path is live)."""
     _, specs, gen = _gen_setup("vera")
-    a1 = gen(torch.randn(D_TASK))
-    a2 = gen(torch.randn(D_TASK))
+    a1 = gen(torch.randn(TASK_DIM))
+    a2 = gen(torch.randn(TASK_DIM))
     k = next(iter(specs))
     assert not torch.allclose(a1[k][0], a2[k][0], atol=1e-5)
 
@@ -239,7 +239,7 @@ def test_generator_apply_and_backprop():
     model, _, gen = _gen_setup("vera")
     x = torch.randn(2, 4, 24)
     reg = LoRARegistry()
-    reg.set_adapter(gen(torch.randn(D_TASK)))
+    reg.set_adapter(gen(torch.randn(TASK_DIM)))
     with lora_injected(model, TARGETS, reg, scaling=gen.scaling):
         out = model(x)
     out.pow(2).mean().backward()
@@ -306,10 +306,10 @@ class _TinyLM(nn.Module):
         return types.SimpleNamespace(loss=loss, logits=logits)
 
 
-def _fake_gen(model, d_task=_FakeEncoder.dim):
+def _fake_gen(model, task_dim=_FakeEncoder.dim):
     from lora_lab.hypernet.model import HyperLoRAGenerator
     specs = target_specs(model, TARGETS)
-    return HyperLoRAGenerator(specs, d_task=d_task, r=4, alpha=8,
+    return HyperLoRAGenerator(specs, task_dim=task_dim, rank=4, alpha=8,
                               parameterization="vera", trunk_hidden=16)
 
 
@@ -317,7 +317,7 @@ def test_meta_train_reconstruction_runs():
     from lora_lab.hypernet.meta_train import meta_train, SyntheticReconSampler
     model, specs, _ = _gen_setup("vera")
     gen = _fake_gen(model)
-    sampler = SyntheticReconSampler(specs, r=4, seed=0)
+    sampler = SyntheticReconSampler(specs, rank=4, seed=0)
     losses = meta_train(gen, model, TARGETS, sampler, _FakeEncoder(),
                         steps=5, lr=1e-3, objective="reconstruction", log=lambda *_: None)
     assert len(losses) == 5 and all(torch.isfinite(torch.tensor(l)) for l in losses)

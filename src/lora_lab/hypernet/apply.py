@@ -23,7 +23,7 @@ import torch.nn.functional as F
 
 
 class LoRARegistry(dict):
-    """Maps target module key -> (A, B). A: (r, in), B: (out, r). Set per step."""
+    """Maps target module key -> (A, B). A: (rank, in), B: (out, rank). Set per step."""
 
     def set_adapter(self, adapter: dict) -> None:
         self.clear()
@@ -40,14 +40,14 @@ class _LoRAWrapper(nn.Module):
         self.registry = registry
         self.scaling = scaling
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        out = self.base(x)
-        ab = self.registry.get(self.key)
-        if ab is not None:
-            a, b = ab  # a:(r,in)  b:(out,r)
-            # x:(...,in) -> (...,r) via Aᵀ -> (...,out) via Bᵀ
-            out = out + self.scaling * F.linear(F.linear(x, a), b)
-        return out
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        output = self.base(inputs)
+        factors = self.registry.get(self.key)
+        if factors is not None:
+            lora_a, lora_b = factors  # lora_a:(rank,in)  lora_b:(out,rank)
+            # inputs:(...,in) -> (...,rank) via Aᵀ -> (...,out) via Bᵀ
+            output = output + self.scaling * F.linear(F.linear(inputs, lora_a), lora_b)
+        return output
 
 
 def _last_attr(model: nn.Module, dotted: str):
@@ -58,15 +58,16 @@ def _last_attr(model: nn.Module, dotted: str):
 def iter_target_linears(model: nn.Module, target_modules):
     """Yield (qualified_name, Linear) for every Linear whose leaf name matches."""
     targets = set(target_modules)
-    for name, mod in model.named_modules():
-        if isinstance(mod, nn.Linear) and name.rsplit(".", 1)[-1] in targets:
-            yield name, mod
+    for name, module in model.named_modules():
+        if isinstance(module, nn.Linear) and name.rsplit(".", 1)[-1] in targets:
+            yield name, module
 
 
 def target_specs(model: nn.Module, target_modules) -> dict[str, tuple[int, int]]:
     """{key: (in_features, out_features)} for every targeted Linear — the shape
     contract the hypernetwork's output heads must satisfy."""
-    return {n: (m.in_features, m.out_features) for n, m in iter_target_linears(model, target_modules)}
+    return {name: (module.in_features, module.out_features)
+            for name, module in iter_target_linears(model, target_modules)}
 
 
 def inject(model: nn.Module, target_modules, registry: LoRARegistry, *, scaling: float):
@@ -75,10 +76,10 @@ def inject(model: nn.Module, target_modules, registry: LoRARegistry, *, scaling:
     Returns a list of (key, original_linear) so the wrapping can be undone.
     """
     handles = []
-    for name, mod in list(iter_target_linears(model, target_modules)):
+    for name, module in list(iter_target_linears(model, target_modules)):
         parent, attr = _last_attr(model, name)
-        setattr(parent, attr, _LoRAWrapper(mod, name, registry, scaling))
-        handles.append((name, mod))
+        setattr(parent, attr, _LoRAWrapper(module, name, registry, scaling))
+        handles.append((name, module))
     return handles
 
 

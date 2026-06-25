@@ -35,18 +35,18 @@ class MeanPoolEncoder:
 
         self.device = device
         self.max_len = max_len
-        self.tok = AutoTokenizer.from_pretrained(model_name)
-        if self.tok.pad_token is None:  # decoder-only encoders (e.g. SmolLM2) lack one
-            self.tok.pad_token = self.tok.eos_token
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        if self.tokenizer.pad_token is None:  # decoder-only encoders (e.g. SmolLM2) lack one
+            self.tokenizer.pad_token = self.tokenizer.eos_token
         self.model = AutoModel.from_pretrained(model_name).to(device).eval()
-        for p in self.model.parameters():
-            p.requires_grad_(False)
+        for param in self.model.parameters():
+            param.requires_grad_(False)
         self.dim = int(self.model.config.hidden_size)
 
     @torch.no_grad()
     def encode(self, descriptions: list[str]) -> torch.Tensor:
-        batch = self.tok(descriptions, return_tensors="pt", padding=True,
-                         truncation=True, max_length=self.max_len).to(self.device)
+        batch = self.tokenizer(descriptions, return_tensors="pt", padding=True,
+                               truncation=True, max_length=self.max_len).to(self.device)
         out = self.model(**batch).last_hidden_state          # (N, T, H)
         mask = batch["attention_mask"].unsqueeze(-1).float()  # (N, T, 1)
         summed = (out * mask).sum(1)
@@ -54,7 +54,7 @@ class MeanPoolEncoder:
         return summed / counts                                # (N, H)
 
 
-def normalize_embeddings(emb: torch.Tensor) -> torch.Tensor:
+def normalize_embeddings(embeddings: torch.Tensor) -> torch.Tensor:
     """L2-normalize rows — used by the Phase-2 retrieval baseline + as a stable
     conditioning input."""
-    return torch.nn.functional.normalize(emb, dim=-1)
+    return torch.nn.functional.normalize(embeddings, dim=-1)

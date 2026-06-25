@@ -64,15 +64,15 @@ def build_components(cfg: HyperConfig, *, allow_gpu: bool):
 
     encoder = MeanPoolEncoder(cfg.encoder_model, device=cfg.device)
     specs = target_specs(base, cfg.target_modules)
-    gen = HyperLoRAGenerator(specs, d_task=encoder.dim, r=cfg.r, alpha=cfg.alpha,
-                             parameterization=cfg.parameterization, d_layer=cfg.d_layer,
-                             d_module=cfg.d_module, trunk_hidden=cfg.trunk_hidden)
+    gen = HyperLoRAGenerator(specs, task_dim=encoder.dim, rank=cfg.rank, alpha=cfg.alpha,
+                             parameterization=cfg.parameterization, layer_dim=cfg.layer_dim,
+                             module_dim=cfg.module_dim, trunk_hidden=cfg.trunk_hidden)
     return base, tok, encoder, gen, specs
 
 
 def build_sampler(cfg: HyperConfig, base, tok, specs, *, synthetic: bool):
     if synthetic:
-        return SyntheticReconSampler(specs, r=cfg.r, seed=cfg.seed)
+        return SyntheticReconSampler(specs, rank=cfg.rank, seed=cfg.seed)
     if cfg.objective == "reconstruction":
         from lora_lab.hypernet.samplers import LibraryReconSampler
         return LibraryReconSampler(cfg.split_path, cfg.library_path, seed=cfg.seed)
