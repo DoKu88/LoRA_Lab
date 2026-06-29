@@ -7,7 +7,7 @@ target_modules: [q_proj, k_proj, v_proj]
 load_in_4bit: true
 rank: 16
 alpha: 32
-parameterization: lowrank
+parameterization: full
 encoder_model: sentence-transformers/all-MiniLM-L6-v2
 layer_dim: 16
 module_dim: 8

@@ -3,7 +3,7 @@
 Three pieces:
   MeanPoolEncoder     frozen text encoder: description -> fixed task embedding
   *Head               output heads that map a conditioning vector -> (A, B)
-  HyperLoRAGenerator  shared trunk + layer/module embeddings + per-target head
+  HyperLoRAGenerator  shared trunk + layer/module embeddings + one shared head
 
 The generator emits, in one forward pass, ``{key: (A:(rank,in), B:(out,rank))}``
 for every targeted Linear. The B path is zero-init so ΔW = 0 at start.
@@ -163,11 +163,12 @@ class HyperLoRAGenerator(nn.Module):
     """Generator: (task-description embedding) -> per-target LoRA A/B.
 
     A **shared trunk** over the task embedding plus learned **layer** and
-    **module** embeddings feeds a per-target output head (default low-rank A/B).
-    Cross-layer/module structure is shared through the trunk and the embeddings,
-    not one independent generator per target. Forward contract:
-    ``task_emb -> {key: (A:(rank,in), B:(out,rank))}``, with the B path zero-init
-    so ΔW = 0 at start. The A path varies with the task embedding from init.
+    **module** embeddings feed a **single shared output head** (T2L-style). The
+    same head produces every target's (A, B) from its conditioning, sized to the
+    largest target and sliced to each target's (in, out) — so structure is shared
+    across all layers/modules instead of being learned by 96 independent heads.
+    Forward contract: ``task_emb -> {key: (A:(rank,in), B:(out,rank))}``, with the
+    B path zero-init so ΔW = 0 at start. The A path varies with the task from init.
     """
 
     def __init__(
@@ -202,15 +203,19 @@ class HyperLoRAGenerator(nn.Module):
         self.module_emb = nn.Embedding(len(modules), module_dim)
         cond_dim = trunk_hidden + layer_dim + module_dim
 
+        # One SHARED head sized to the largest target; each target's (A, B) is
+        # sliced from it. All per-target specialization comes from the conditioning
+        # (task ⊕ layer ⊕ module), not separate per-target weights.
+        max_in = max(in_features for in_features, _ in target_specs.values())
+        max_out = max(out_features for _, out_features in target_specs.values())
         head_cls = HEADS[parameterization]
-        self.heads = nn.ModuleDict()
+        self.head = head_cls(cond_dim, max_in, max_out, rank, **(head_kwargs or {}))
         self._meta = {}
+        self._shapes = {}
         for index, key in enumerate(self.keys):
-            in_features, out_features = target_specs[key]
-            self.heads[self._param_key(index)] = head_cls(
-                cond_dim, in_features, out_features, rank, **(head_kwargs or {})
-            )
-            self._meta[self._param_key(index)] = parsed[key]
+            param_key = self._param_key(index)
+            self._meta[param_key] = parsed[key]
+            self._shapes[param_key] = target_specs[key]   # (in, out) for slicing
 
     @staticmethod
     def _param_key(index: int) -> str:
@@ -224,11 +229,14 @@ class HyperLoRAGenerator(nn.Module):
         device = task_hidden.device  # index tensors must match the (possibly cuda) embeddings
         adapter: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
         for index, key in enumerate(self.keys):
-            layer, module = self._meta[self._param_key(index)]
+            param_key = self._param_key(index)
+            layer, module = self._meta[param_key]
+            in_features, out_features = self._shapes[param_key]
             conditioning = torch.cat([
                 task_hidden,
                 self.layer_emb(torch.tensor(layer, device=device)),
                 self.module_emb(torch.tensor(self.module_ids[module], device=device)),
             ], dim=-1)
-            adapter[key] = self.heads[self._param_key(index)](conditioning)
+            lora_a, lora_b = self.head(conditioning)            # (rank, max_in), (max_out, rank)
+            adapter[key] = (lora_a[:, :in_features], lora_b[:out_features, :])  # slice to target
         return adapter

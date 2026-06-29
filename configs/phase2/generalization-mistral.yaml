@@ -12,8 +12,8 @@ target_modules: [q_proj, k_proj, v_proj]   # match the library adapters
 load_in_4bit: true                          # QLoRA-style frozen base
 rank: 16
 alpha: 32
-parameterization: lowrank   # 151.4M params (generates real A/B via a bottleneck;
-                            # vera 55.7M can't reconstruct a target ΔW, full 2.65B OOMs).
+parameterization: full   # dense A/B (T2L-L style) — ~37M with the single shared
+                         # head; lowrank/vera are smaller compression rungs.
 encoder_model: sentence-transformers/all-MiniLM-L6-v2
 layer_dim: 16
 module_dim: 8
