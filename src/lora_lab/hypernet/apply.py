@@ -1,6 +1,6 @@
 """Inject hypernetwork-generated LoRA factors as a live adapter on a frozen base.
 
-The key Phase-2 plumbing requirement (Sprint 1): apply a generated ΔW = scaling·(B·A)
+The core requirement: apply a generated ΔW = scaling·(B·A)
 to the base's targeted Linear layers such that (a) the base forward uses ΔW and
 (b) gradients flow back into A/B — which are *outputs of the hypernetwork*, not
 registered base parameters. We do this by wrapping each target ``nn.Linear`` in a

@@ -1,14 +1,13 @@
-"""Real meta-training samplers (Sprint 3/4) — feed the loop from Phase-1 data.
+"""Meta-training samplers — feed the loop from the library data.
 
-LibraryReconSampler (S3): for each TRAIN-split task, load its Lots-of-LoRAs
-adapter's A/B tensors and yield (description, target_adapter) for the
-reconstruction objective. SNISFTSampler (S4): tokenize a train task's SNI batch
-with prompt-masking and yield (description, batch) for the SFT objective.
+LibraryReconSampler: for each TRAIN-split task, load its Lots-of-LoRAs adapter's
+A/B tensors and yield (description, target_adapter) for the reconstruction
+objective. SNISFTSampler: tokenize a train task's SNI batch with prompt-masking
+and yield (description, batch) for the SFT objective.
 
-Both read only the **train** split of the Phase-1 locked split — never the
-held-out tasks (the leakage contract). Adapter loading is lazy + cached. The
-PEFT->base key mapping is pure logic (``parse_lora_state_dict``), unit-tested
-without any download.
+Both read only the **train** split — never the held-out tasks (the leakage
+contract). Adapter loading is cached. The PEFT->base key mapping is pure logic
+(``parse_lora_state_dict``).
 """
 
 from __future__ import annotations
@@ -18,6 +17,10 @@ from pathlib import Path
 
 import torch
 import yaml
+from huggingface_hub import hf_hub_download
+from safetensors.torch import load_file
+
+from ..data.sni import DataCollatorForSupervised, TaskSpec, get_dataset
 
 # PEFT saves LoRA factors as
 #   base_model.model.<module path>.lora_A.weight   shape (r, in)
@@ -74,9 +77,6 @@ class LibraryReconSampler:
 
     def _load_adapter(self, task: str) -> dict[str, tuple[torch.Tensor, torch.Tensor]]:
         if task not in self._cache:
-            from huggingface_hub import hf_hub_download
-            from safetensors.torch import load_file
-
             path = hf_hub_download(self.library[task]["adapter_repo"], "adapter_model.safetensors")
             self._cache[task] = parse_lora_state_dict(load_file(path))
         return self._cache[task]
@@ -92,14 +92,12 @@ class LibraryReconSampler:
 class SNISFTSampler:
     """Yield (description, prompt-masked batch) over the TRAIN split for SFT.
 
-    Reuses the Phase-0 ``data/sni`` pipeline (chat-template + prompt masking) so
-    SFT trains on exactly the task data the library adapters were trained for.
+    Reuses the ``data/sni`` pipeline (chat-template + prompt masking) so SFT
+    trains on exactly the task data the library adapters were trained for.
     """
 
     def __init__(self, split_path: str | Path, library_path: str | Path, tokenizer,
                  *, batch_size: int = 4, max_seq_len: int = 512, seed: int = 0):
-        from ..data.sni import DataCollatorForSupervised, TaskSpec, get_dataset
-
         train = _load_split_train(split_path)
         library = _load_library(library_path)
         self.tokenizer = tokenizer

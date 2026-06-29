@@ -1,10 +1,10 @@
-"""Nearest-neighbor retrieval baseline (Sprint 5) — the bar the gate must clear.
+"""Nearest-neighbor retrieval baseline — the bar a generated LoRA must clear.
 
-The Phase-2 gate (notes.md §C2, §A.10) is: generated LoRAs must beat *retrieving
-the closest existing library LoRA by task-description similarity*. This module
-builds a cosine index over the **train-split** task descriptions and, for a
-held-out description, returns the nearest train task — whose library adapter is
-then applied as the "retrieved" baseline.
+The baseline: instead of generating a LoRA, retrieve *the closest existing
+library LoRA by task-description similarity*. This module builds a cosine index
+over the **train-split** task descriptions and, for a held-out description,
+returns the nearest train task — whose library adapter is then applied as the
+"retrieved" baseline.
 
 Train-split only by construction: a held-out task can never retrieve itself (the
 index simply doesn't contain held-out tasks), which keeps the baseline honest.

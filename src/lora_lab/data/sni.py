@@ -8,7 +8,7 @@ exposes a held-out eval view with raw references for metric scoring.
 
 Determinism: splits come pre-defined from the source repos; any subsampling
 is seeded; ``split_hash`` over the (ordered) example ids lets us assert that
-the exact split used is reproducible (S2 definition of done).
+the exact split used is reproducible.
 """
 
 from __future__ import annotations
@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import datasets as hfds
+import torch
 import yaml
 
 # -100 is torch's CrossEntropy ignore_index — masks prompt tokens from loss.
@@ -210,8 +212,6 @@ class DataCollatorForSupervised:
         )
 
     def __call__(self, features: list[dict]):
-        import torch
-
         max_len = max(len(f["input_ids"]) for f in features)
         input_ids, attn, labels = [], [], []
         for f in features:
@@ -253,8 +253,6 @@ def get_dataset(
     seeded and the resulting ordered ids are hashed into ``bundle.hashes`` for
     the reproducibility assertion.
     """
-    import datasets as hfds
-
     hfds.disable_progress_bars()
 
     spec = task if isinstance(task, TaskSpec) else load_tasks_manifest(manifest)[task]

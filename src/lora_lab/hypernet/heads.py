@@ -1,25 +1,24 @@
-"""Output-parameterization heads (Sprint 2) — conditioning vector -> LoRA A/B.
+"""Output-parameterization heads — conditioning vector -> LoRA A/B.
 
 The output dimensionality is the single biggest lever on hypernetwork size and
-trainability (notes.md §A.2). Each head maps a per-target conditioning vector
-``conditioning`` (task embedding ⊕ layer/module embedding) to factors
-``A:(rank,in)``, ``B:(out,rank)`` for one target Linear. Three options,
-smallest-output first. The S2 decision is **LowRankABHead** (the committed
-default): it is the smallest rung that can actually *reconstruct* a target ΔW —
-the diagnostic showed VeRA cannot (its frozen random basis only gets reweighted,
-not reshaped), and FullABHead OOMs on 32 GB. VeRA/Full are kept as the documented
-rungs of the ladder:
+trainability. Each head maps a per-target conditioning vector ``conditioning``
+(task embedding ⊕ layer/module embedding) to factors ``A:(rank,in)``,
+``B:(out,rank)`` for one target Linear. Three options, smallest-output first.
+The committed default is **LowRankABHead**: it is the smallest that can actually
+*reconstruct* a target ΔW — VeRA cannot (its frozen random basis only gets
+reweighted, not reshaped), and FullABHead OOMs on 32 GB. VeRA/Full remain as the
+documented rungs of the ladder:
 
   LowRankABHead  generate A and B through a low-rank bottleneck (bottleneck_dim ≪
                  in,out), so the head weight is O(bottleneck_dim·(in+out)). **Default.**
   VeRAHead       frozen random A/B shared per target; generate only small scaling
-                 vectors (VeRA-style, §2.4). Smallest output, but can only reweight
-                 fixed directions → cannot reconstruct a specific adapter.
-  FullABHead     dense heads emit A and B directly (the T2L default). Largest; OOMs.
+                 vectors. Smallest output, but can only reweight fixed directions
+                 → cannot reconstruct a specific adapter.
+  FullABHead     dense heads emit A and B directly. Largest; OOMs on 32 GB.
 
-All heads zero-init the B path so ΔW = 0 at start (the no-op invariant the S1
-plumbing relies on). ``estimate_params`` compares total hypernetwork size across
-parameterizations for a real target set — the number that drives the S2 choice.
+All heads zero-init the B path so ΔW = 0 at start (the no-op invariant).
+``estimate_params`` compares total hypernetwork size across parameterizations for
+a real target set — the number that drives the parameterization choice.
 """
 
 from __future__ import annotations
@@ -29,7 +28,7 @@ import torch.nn as nn
 
 
 class FullABHead(nn.Module):
-    """Dense: conditioning -> A (rank·in) and B (out·rank). Largest output; T2L default."""
+    """Dense: conditioning -> A (rank·in) and B (out·rank). Largest output."""
 
     def __init__(self, cond_dim: int, in_features: int, out_features: int, rank: int):
         super().__init__()
@@ -104,9 +103,8 @@ def estimate_params(parameterization: str, target_specs: dict[str, tuple[int, in
                     cond_dim: int, rank: int, **head_kwargs) -> int:
     """Total *learned* hypernetwork params if each target gets its own head.
 
-    Drives the S2 choice: e.g. for Mistral-7B (q/k/v over 32 layers) the Full
-    parameterization is far larger than VeRA — this quantifies the gap before we
-    commit a training run.
+    Quantifies the parameterization size gap: e.g. for Mistral-7B (q/k/v over 32
+    layers) the Full parameterization is far larger than VeRA.
     """
     head_cls = HEADS[parameterization]
     total = 0

@@ -6,9 +6,8 @@ Every run writes, under ``results/runs/{name}/``:
                         time, gpu_mem_gb, ...) — the per-step time series
   * ``summary.json``  — the final scalar summary (peak VRAM, params, etc.)
 
-W&B is a thin, optional layer (sprint plan S3): if ``wandb`` is missing or
-auth is unavailable, the run still executes and logs locally. Online mode
-degrades to offline on any init failure rather than blocking the run.
+W&B is a thin layer: if auth is unavailable, online mode degrades to offline on
+any init failure rather than blocking the run.
 """
 
 from __future__ import annotations
@@ -18,6 +17,8 @@ import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+import wandb
 
 
 class RunLogger:
@@ -54,8 +55,6 @@ class RunLogger:
             return
         wb_name = self._wandb_run_name()
         try:
-            import wandb
-
             # offline never needs creds; online falls back to offline on error.
             run = wandb.init(
                 project=self.config.logging.wandb_project,
@@ -75,8 +74,6 @@ class RunLogger:
                 # one retry in offline mode so the data is still captured locally
                 try:
                     os.environ["WANDB_MODE"] = "offline"
-                    import wandb
-
                     wandb.init(
                         project=self.config.logging.wandb_project,
                         name=wb_name,

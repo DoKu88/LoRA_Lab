@@ -1,6 +1,7 @@
-# Phase 2 Sprint 1 — tiny-model plumbing smoke (CPU, no GPU).
-# Validates generate -> apply -> backprop on a small base before scaling.
-# Run: scripts/phase2_smoke.py uses these dims; safe to run any time (CPU-only).
+# Tiny-model smoke (CPU, no GPU): validate generate -> apply -> backprop on a
+# small base. Run:
+#   CUDA_VISIBLE_DEVICES="" python scripts/train_reconstruction.py \
+#       --config configs/phase2/tiny-plumbing.yaml --synthetic --steps 5
 base_model: HuggingFaceTB/SmolLM2-135M
 target_modules: [q_proj, v_proj]
 load_in_4bit: false

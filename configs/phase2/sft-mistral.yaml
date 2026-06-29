@@ -1,18 +1,14 @@
-# Phase 2 Sprint 4 — SFT meta-training (THE GATE RUN).
-#
-# VRAM-critical: applies the generated LoRA to the frozen 4-bit Mistral-7B, runs
-# the task, and backprops the task loss THROUGH the base into the hypernetwork.
-# This is the design-sensitive, GPU-heavy step.
-#
-# >>> LAUNCH ONLY after (a) reviewing the parameterization choice below and
-# >>> (b) the GPU is free (the Phase-1 gate must have finished). Not run autonomously.
+# SFT meta-training: apply the generated LoRA to the frozen 4-bit Mistral-7B, run
+# the task, and backprop the task loss THROUGH the base into the hypernetwork.
+# VRAM-heavy; gated behind --allow-gpu.
 #
 # Recommended order:
-#   1. (optional) train the recon warmup:  configs/phase2/recon-warmup.yaml
+#   1. (optional) reconstruction warmup:
+#        python scripts/train_reconstruction.py --config configs/phase2/recon-warmup.yaml --allow-gpu
 #   2. this SFT run (warm-starts from the recon checkpoint if present)
-#   3. eval vs baselines + the gate (generated > retrieval on held-out)
+#   3. eval vs baselines (generated > retrieval on held-out)
 base_model: mistralai/Mistral-7B-Instruct-v0.2
-target_modules: [q_proj, k_proj, v_proj]   # match the Phase-1 library (Phase-3 comparability)
+target_modules: [q_proj, k_proj, v_proj]   # match the library adapters
 load_in_4bit: true                          # QLoRA-style frozen base
 rank: 16
 alpha: 32
@@ -29,7 +25,7 @@ batch_size: 4
 grad_accum: 2
 max_seq_len: 512
 seed: 42
-gradient_checkpointing: true   # base-backprop memory lever (notes.md §B)
+gradient_checkpointing: true   # base-backprop memory lever
 warmup_from: results/phase2/runs/recon-warmup-lowrank/hypernet.pt
 library_path: configs/phase1/library.yaml
 split_path: configs/phase1/heldout_split.yaml

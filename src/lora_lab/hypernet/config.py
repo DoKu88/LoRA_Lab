@@ -1,12 +1,10 @@
-"""Phase 2 hypernetwork run config (one YAML per run; round-trips load->run).
+"""Hypernetwork run config (one YAML per run; round-trips load->run).
 
-Mirrors the Phase-0 ``RunConfig`` pattern but for the meta-training run. Captures
-everything needed to reproduce a hypernetwork run: the frozen base + target LoRA
-shape (which must match the Phase-1 library for Phase-3 comparability), the
-hypernetwork architecture (parameterization + conditioning dims), the objective
-(reconstruction warmup vs SFT), and the data split. The committed YAMLs in
-``configs/phase2/`` are the staged launch points — the user reviews the design
-choice (esp. ``parameterization``) then launches with one command.
+Captures everything needed to reproduce a hypernetwork run: the frozen base +
+target LoRA shape (which must match the library adapters), the hypernetwork
+architecture (parameterization + conditioning dims), the objective
+(reconstruction vs SFT), and the data split. Each run is launched from a YAML
+config; ``parameterization`` is the main design knob.
 """
 
 from __future__ import annotations
@@ -24,7 +22,7 @@ VALID_PARAM = ("vera", "lowrank", "full")
 
 @dataclass
 class HyperConfig:
-    # --- frozen base + target LoRA shape (match the Phase-1 library) ---------
+    # --- frozen base + target LoRA shape (match the library adapters) --------
     base_model: str = "mistralai/Mistral-7B-Instruct-v0.2"
     target_modules: list[str] = field(default_factory=lambda: ["q_proj", "k_proj", "v_proj"])
     load_in_4bit: bool = True          # QLoRA-style frozen base
@@ -32,16 +30,16 @@ class HyperConfig:
     alpha: int = 32
 
     # --- hypernetwork architecture ------------------------------------------
-    parameterization: str = "lowrank"  # lowrank (default) | vera | full (the S2 ladder).
+    parameterization: str = "lowrank"  # lowrank (default) | vera | full.
                                        # lowrank: vera can't reconstruct a target ΔW (frozen
-                                       # random basis), full OOMs — see phase-2-sprint-plan.md.
+                                       # random basis), full OOMs on 32 GB.
     encoder_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     layer_dim: int = 16
     module_dim: int = 8
     trunk_hidden: int = 256
 
     # --- objective + optimization -------------------------------------------
-    objective: str = "sft"             # reconstruction (warmup) | sft (the gate run)
+    objective: str = "sft"             # reconstruction | sft
     lr: float = 1e-4
     max_steps: int = 2000
     batch_size: int = 4
@@ -51,7 +49,7 @@ class HyperConfig:
     gradient_checkpointing: bool = True   # base-backprop memory lever (SFT)
     warmup_from: str | None = None        # path to a recon-warmup hypernet checkpoint
 
-    # --- data (Phase-1 artifacts) -------------------------------------------
+    # --- data (library + split) ---------------------------------------------
     library_path: str = "configs/phase1/library.yaml"
     split_path: str = "configs/phase1/heldout_split.yaml"
 

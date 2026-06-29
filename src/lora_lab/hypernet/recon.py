@@ -1,9 +1,8 @@
-"""Reconstruction objective (T2L Eq. 6) — regress generated ΔW onto a library LoRA.
+"""Reconstruction objective — regress generated ΔW onto a library LoRA.
 
-Cheap warmup / plumbing: no base-model forward pass. We regress the generated
-ΔW = scaling·(B·A) onto a target adapter's ΔW for the same target keys. Used in
-Sprint 1 (overfit-a-toy-target plumbing) and Sprint 3 (warmup init over the
-train-split library). The real generalization comes from SFT (Eq. 5), not this.
+Cheap: no base-model forward pass. We regress the generated ΔW = scaling·(B·A)
+onto a target adapter's ΔW for the same target keys, over the train-split
+library. It is a warmup/initializer; the real generalization comes from SFT.
 
 We use the **relative Frobenius error** ``‖ΔW_gen − ΔW_tgt‖_F / ‖ΔW_tgt‖_F`` rather
 than mean-reduction L1: a LoRA ΔW has a healthy Frobenius norm (~1) but tiny

@@ -1,14 +1,14 @@
-"""Task-description encoder (Sprint 2) — text -> fixed task embedding.
+"""Task-description encoder — text -> fixed task embedding.
 
-The hypernetwork is *conditioned* on a natural-language task description (the SNI
-Definition aligned in Phase 1). This module turns that text into a fixed-width
-embedding the generator consumes. The encoder is **frozen** (it is conditioning,
-not something we meta-learn) — only the hypernetwork heads train.
+The hypernetwork is *conditioned* on a natural-language task description. This
+module turns that text into a fixed-width embedding the generator consumes. The
+encoder is **frozen** (it is conditioning, not something we train) — only the
+hypernetwork heads train.
 
 Default path (``MeanPoolEncoder``): mean-pool a frozen HF model's hidden states
 over the description tokens. Cheap, CPU-loadable, no extra dependency beyond
-``transformers``. A sentence-transformers model can be swapped in later behind the
-same ``encode()`` interface; tests inject a fake encoder so they need no network.
+``transformers``. A sentence-transformers model can be swapped in behind the same
+``encode()`` interface.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import Protocol
 
 import torch
+from transformers import AutoModel, AutoTokenizer
 
 
 class TaskEncoder(Protocol):
@@ -31,8 +32,6 @@ class MeanPoolEncoder:
 
     def __init__(self, model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
                  device: str = "cpu", max_len: int = 128):
-        from transformers import AutoModel, AutoTokenizer
-
         self.device = device
         self.max_len = max_len
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -55,6 +54,6 @@ class MeanPoolEncoder:
 
 
 def normalize_embeddings(embeddings: torch.Tensor) -> torch.Tensor:
-    """L2-normalize rows — used by the Phase-2 retrieval baseline + as a stable
+    """L2-normalize rows — used by the retrieval baseline + as a stable
     conditioning input."""
     return torch.nn.functional.normalize(embeddings, dim=-1)

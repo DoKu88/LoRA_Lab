@@ -1,10 +1,8 @@
-"""Adapt the Phase-0 ``RunLogger`` to Phase-2 ``HyperConfig`` runs.
+"""Build a ``RunLogger`` for a ``HyperConfig`` run.
 
-The Phase-2 W&B contract (sprint plan) is "every run logs everything through
-``RunLogger``" — local-first ``metrics.jsonl`` + best-effort W&B. ``RunLogger``
-reads a ``RunConfig``-shaped object; this thin shim exposes the same surface
-from a ``HyperConfig`` so we reuse the logger rather than fork it. The W&B
-*group* is the sprint/stage, *job_type* the objective.
+Logs every run local-first (``metrics.jsonl``) with best-effort W&B. ``RunLogger``
+reads a ``RunConfig``-shaped object; this thin shim exposes the same surface from
+a ``HyperConfig``. The W&B *group* is the run stage, *job_type* the objective.
 """
 
 from __future__ import annotations
@@ -28,7 +26,7 @@ class _LoggerCfg:
         )
         self.model_slug = cfg.base_model.split("/")[-1]
         self.task = cfg.objective       # W&B job_type
-        self.method = stage             # W&B group (sprint/stage)
+        self.method = stage             # W&B group (run stage)
 
     def to_dict(self):
         return self._cfg.to_dict()
@@ -37,6 +35,6 @@ class _LoggerCfg:
         return self._cfg.save(path)
 
 
-def build_run_logger(cfg, *, stage: str = "phase2") -> RunLogger:
-    """Construct a RunLogger for a Phase-2 HyperConfig run."""
+def build_run_logger(cfg, *, stage: str = "train") -> RunLogger:
+    """Construct a RunLogger for a HyperConfig run."""
     return RunLogger(_LoggerCfg(cfg, stage))

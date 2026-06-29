@@ -1,4 +1,4 @@
-"""SNI data pipeline (Sprint 2)."""
+"""SNI data pipeline."""
 
 from .sni import (
     DataCollatorForSupervised,

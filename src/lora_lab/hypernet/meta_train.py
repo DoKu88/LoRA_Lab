@@ -1,16 +1,14 @@
-"""Meta-training loop (Sprint 3/4 skeleton) — sample -> generate -> objective -> step.
+"""Meta-training loop — sample -> generate -> objective -> step.
 
 The single loop that drives both objectives:
-  reconstruction (S3 warmup): relative Frobenius error between generated ΔW and a
-                              target library LoRA; no base forward.
-  sft (S4 gate run):          apply the generated adapter to the frozen base, run
-                              the task batch, backprop the task loss into the
-                              hypernetwork.
+  reconstruction: relative Frobenius error between generated ΔW and a target
+                  library LoRA; no base forward.
+  sft:            apply the generated adapter to the frozen base, run the task
+                  batch, backprop the task loss into the hypernetwork.
 
-This module is **device/model-agnostic** so it runs on the tiny-plumbing config
-(SmolLM2-135M, CPU) for validation. The GPU/4-bit Mistral path is the SAME code;
-the entrypoint (scripts/phase2_meta_train.py, to be added) gates it behind an
-explicit ``--allow-gpu`` so it is never launched autonomously.
+This module is **device/model-agnostic** so it runs on a tiny base (e.g.
+SmolLM2-135M, CPU). The GPU/4-bit path is the same code; the entrypoint gates it
+behind an explicit ``--allow-gpu`` so it is never launched autonomously.
 """
 
 from __future__ import annotations
@@ -19,6 +17,7 @@ import time
 from typing import Protocol
 
 import torch
+from tqdm.auto import tqdm
 
 from ..utils.vram import cuda_mem_snapshot, reset_peak_memory
 from .apply import LoRARegistry, inject, remove
@@ -100,7 +99,6 @@ def meta_train(
     step_iter = range(steps)
     pbar = None
     if progress:
-        from tqdm.auto import tqdm
         pbar = tqdm(step_iter, total=steps, desc=f"meta-train [{objective}]", unit="step")
         step_iter = pbar
     try:
@@ -147,11 +145,11 @@ def meta_train(
 
 
 class SyntheticReconSampler:
-    """CPU plumbing sampler: random target adapters + dummy descriptions.
+    """Synthetic sampler: random target adapters + dummy descriptions.
 
-    Lets the loop run end-to-end with no library downloads (used by the tiny-
-    plumbing smoke + tests). The real S3 sampler reads the Phase-1 train split +
-    library adapters; the real S4 sampler tokenizes each task's SNI batch.
+    Lets the loop run end-to-end with no library downloads (a CPU smoke). The
+    real samplers (LibraryReconSampler, SNISFTSampler) read the train split +
+    library adapters.
     """
 
     def __init__(self, target_specs: dict[str, tuple[int, int]], rank: int, seed: int = 0):

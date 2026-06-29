@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import torch
+from peft import PeftModel
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from ..data.sni import get_dataset
 from .metrics import score_predictions
@@ -94,16 +96,12 @@ def evaluate_inline(model, tok, bundle, metric, *, max_new_tokens=64, batch_size
 
 
 def _load_model(checkpoint: Path, base_model: str, device: str):
-    from transformers import AutoModelForCausalLM, AutoTokenizer
-
     tok = AutoTokenizer.from_pretrained(str(checkpoint))
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
     tok.padding_side = "left"  # left-pad for batched generation
 
     if (checkpoint / "adapter_config.json").exists():
-        from peft import PeftModel
-
         base = AutoModelForCausalLM.from_pretrained(base_model, dtype=torch.bfloat16)
         model = PeftModel.from_pretrained(base, str(checkpoint))
     else:
