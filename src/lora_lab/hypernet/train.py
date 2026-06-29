@@ -122,8 +122,19 @@ def _load_samples(cfg, tokenizer, specs, *, split, synthetic):
         return SyntheticReconSampler(specs, rank=cfg.rank, seed=cfg.seed)
     if cfg.objective == "reconstruction":
         return LibraryReconSampler(cfg.split_path, cfg.library_path, split=split, seed=cfg.seed)
-    return GeneralizationSampler(cfg.split_path, cfg.library_path, tokenizer,
-                                 split=split, max_seq_len=cfg.max_seq_len, seed=cfg.seed)
+    if cfg.objective == "generalization":
+        return GeneralizationSampler(cfg.split_path, cfg.library_path, tokenizer,
+                                     split=split, max_seq_len=cfg.max_seq_len, seed=cfg.seed)
+    raise ValueError(f"unknown objective: {cfg.objective!r}")
+
+
+def _load_val_samples(cfg, tokenizer, specs, *, synthetic):
+    """The validation sampler, or None when there's nothing to validate on
+    (the synthetic smoke, or an empty val split)."""
+    if synthetic:
+        return None
+    val_data = _load_samples(cfg, tokenizer, specs, split="val", synthetic=False)
+    return val_data if len(val_data) > 0 else None
 
 
 def _build_logger(cfg, stage):
@@ -147,9 +158,7 @@ def train(cfg, *, steps=None, synthetic=False, stage=None):
     device, scaling = cfg.device, generator.scaling
 
     train_data = _load_samples(cfg, tokenizer, specs, split="train", synthetic=synthetic)
-    val_data = None if synthetic else _load_samples(cfg, tokenizer, specs, split="val", synthetic=False)
-    if val_data is not None and len(val_data) == 0:
-        val_data = None
+    val_data = _load_val_samples(cfg, tokenizer, specs, synthetic=synthetic)
 
     optimizer = torch.optim.Adam(generator.parameters(), lr=cfg.lr)
     logger = _build_logger(cfg, stage or cfg.objective)
