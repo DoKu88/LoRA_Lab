@@ -1,14 +1,13 @@
-# Tiny-model smoke (CPU, no GPU): validate generate -> apply -> backprop on a
-# small base. Run:
-#   CUDA_VISIBLE_DEVICES="" python scripts/train_reconstruction.py \
-#       --config configs/phase2/tiny-plumbing.yaml --synthetic --steps 5
+# Tiny-model smoke: validate generate -> apply -> backprop on a small base. Run:
+#   python scripts/train_reconstruction.py \
+#       --config configs/phase2/tiny-plumbing.yaml --synthetic --steps 5 --allow-gpu
 base_model: HuggingFaceTB/SmolLM2-135M
 target_modules: [q_proj, v_proj]
 load_in_4bit: false
 rank: 8
 alpha: 16
 parameterization: lowrank
-# SmolLM2 doubles as the mean-pool encoder here so the CPU smoke is fully offline
+# SmolLM2 doubles as the mean-pool encoder here so the smoke needs no extra model
 # (the real runs use a sentence-transformers encoder).
 encoder_model: HuggingFaceTB/SmolLM2-135M
 layer_dim: 8
@@ -25,7 +24,7 @@ gradient_checkpointing: false
 warmup_from: null
 library_path: configs/phase1/library.yaml
 split_path: configs/phase1/heldout_split.yaml
-device: cpu
+device: cuda
 output_root: results/phase2/runs
 run_name: tiny-plumbing
 wandb_project: lora-lab-phase2

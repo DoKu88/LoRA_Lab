@@ -5,9 +5,9 @@ Regress the generated LoRA (ΔW = scaling·B·A) onto each train-split library
 LoRA's ΔW — no base-model forward pass. Produces the checkpoint the SFT run
 warm-starts from.
 
-    # CPU smoke (random synthetic targets, offline)
-    CUDA_VISIBLE_DEVICES="" python scripts/train_reconstruction.py \
-        --config configs/phase2/tiny-plumbing.yaml --synthetic --steps 5
+    # smoke (random synthetic targets, tiny model)
+    python scripts/train_reconstruction.py \
+        --config configs/phase2/tiny-plumbing.yaml --synthetic --steps 5 --allow-gpu
 
     # the real reconstruction run (needs the library adapters + a GPU)
     python scripts/train_reconstruction.py --config configs/phase2/recon-warmup.yaml --allow-gpu
@@ -16,13 +16,9 @@ warm-starts from.
 from __future__ import annotations
 
 import argparse
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-
-from lora_lab.hypernet.config import HyperConfig  # noqa: E402
-from lora_lab.hypernet.train import train  # noqa: E402
+from lora_lab.hypernet.config import HyperConfig
+from lora_lab.hypernet.train import train
 
 
 def main() -> int:

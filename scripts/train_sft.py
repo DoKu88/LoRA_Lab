@@ -12,13 +12,9 @@ set in the config. GPU-heavy; gated behind ``--allow-gpu``.
 from __future__ import annotations
 
 import argparse
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-
-from lora_lab.hypernet.config import HyperConfig  # noqa: E402
-from lora_lab.hypernet.train import train  # noqa: E402
+from lora_lab.hypernet.config import HyperConfig
+from lora_lab.hypernet.train import train
 
 
 def main() -> int:
