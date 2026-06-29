@@ -16,8 +16,8 @@ target_modules: [q_proj, k_proj, v_proj]   # match the Phase-1 library (Phase-3 
 load_in_4bit: true                          # QLoRA-style frozen base
 rank: 16
 alpha: 32
-parameterization: vera   # 12.9M params (vs lowrank 151M / full 613M). Climb the
-                         # ladder only if the gate (generated > retrieval) fails.
+parameterization: lowrank   # 151.4M params (generates real A/B via a bottleneck;
+                            # vera 55.7M can't reconstruct a target ΔW, full 2.65B OOMs).
 encoder_model: sentence-transformers/all-MiniLM-L6-v2
 layer_dim: 16
 module_dim: 8
@@ -30,11 +30,11 @@ grad_accum: 2
 max_seq_len: 512
 seed: 42
 gradient_checkpointing: true   # base-backprop memory lever (notes.md §B)
-warmup_from: results/phase2/runs/recon-warmup-vera/hypernet.pt
+warmup_from: results/phase2/runs/recon-warmup-lowrank/hypernet.pt
 library_path: configs/phase1/library.yaml
 split_path: configs/phase1/heldout_split.yaml
 device: cuda
 output_root: results/phase2/runs
-run_name: sft-vera-mistral7b
+run_name: sft-lowrank-mistral7b
 wandb_project: lora-lab-phase2
 wandb_mode: offline

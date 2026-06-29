@@ -4,14 +4,18 @@ The output dimensionality is the single biggest lever on hypernetwork size and
 trainability (notes.md §A.2). Each head maps a per-target conditioning vector
 ``conditioning`` (task embedding ⊕ layer/module embedding) to factors
 ``A:(rank,in)``, ``B:(out,rank)`` for one target Linear. Three options,
-smallest-output first — the S2 decision picks the smallest that clears the gate
-(with a documented ladder):
+smallest-output first. The S2 decision is **LowRankABHead** (the committed
+default): it is the smallest rung that can actually *reconstruct* a target ΔW —
+the diagnostic showed VeRA cannot (its frozen random basis only gets reweighted,
+not reshaped), and FullABHead OOMs on 32 GB. VeRA/Full are kept as the documented
+rungs of the ladder:
 
-  VeRAHead       frozen random A shared per target; generate only small per-rank
-                 scaling vectors + B (VeRA-style, §2.4). Smallest output.
   LowRankABHead  generate A and B through a low-rank bottleneck (bottleneck_dim ≪
-                 in,out), so the head weight is O(bottleneck_dim·(in+out)).
-  FullABHead     dense heads emit A and B directly (the T2L default). Largest.
+                 in,out), so the head weight is O(bottleneck_dim·(in+out)). **Default.**
+  VeRAHead       frozen random A/B shared per target; generate only small scaling
+                 vectors (VeRA-style, §2.4). Smallest output, but can only reweight
+                 fixed directions → cannot reconstruct a specific adapter.
+  FullABHead     dense heads emit A and B directly (the T2L default). Largest; OOMs.
 
 All heads zero-init the B path so ΔW = 0 at start (the no-op invariant the S1
 plumbing relies on). ``estimate_params`` compares total hypernetwork size across

@@ -4,7 +4,8 @@ This is the *plumbing* stub: it produces correctly-shaped, task-conditioned A/B
 for every target Linear and is fully differentiable, so Sprint 1 can validate the
 generate -> apply -> backprop loop. It is **not** the final architecture — Sprint 2
 replaces the conditioning/heads (shared trunk + layer/module embeddings, and the
-output-parameterization decision: VeRA-style vs low-rank vs full A/B).
+output-parameterization decision: low-rank A/B — the committed default — vs VeRA-style
+vs full A/B).
 
 Design (cheap, so it runs on a tiny base on CPU): per target key we hold base
 factors ``base_a:(rank,in)`` (small random) and ``base_b:(out,rank)`` (**zero-init**, so
@@ -94,8 +95,10 @@ class HyperLoRAGenerator(nn.Module):
 
     Replaces the S1 stub's per-target free parameters with a **shared trunk** over
     the task embedding plus learned **layer** and **module** embeddings, fed to a
-    per-target output head (default VeRA — the smallest parameterization, ~13 M on
-    Mistral-7B). Cross-layer/module structure is shared through the trunk and the
+    per-target output head (default low-rank A/B — generates real A/B through a
+    bottleneck, ~151 M on Mistral-7B; the smaller VeRA rung can't reconstruct a
+    target ΔW so it is not the default). Cross-layer/module structure is shared
+    through the trunk and the
     embeddings, not 96 independent generators. Same forward contract as the stub:
     ``task_emb -> {key: (A:(rank,in), B:(out,rank))}``, with the B path zero-init
     so ΔW = 0 at start (the no-op invariant). Conditioning is live at init (the A
@@ -109,7 +112,7 @@ class HyperLoRAGenerator(nn.Module):
         *,
         rank: int = 16,
         alpha: int = 32,
-        parameterization: str = "vera",
+        parameterization: str = "lowrank",
         layer_dim: int = 16,
         module_dim: int = 8,
         trunk_hidden: int = 128,

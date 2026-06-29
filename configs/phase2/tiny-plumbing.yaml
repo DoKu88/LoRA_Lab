@@ -6,7 +6,7 @@ target_modules: [q_proj, v_proj]
 load_in_4bit: false
 rank: 8
 alpha: 16
-parameterization: vera
+parameterization: lowrank
 # SmolLM2 doubles as the mean-pool encoder here so the CPU smoke is fully offline
 # (the real runs use a sentence-transformers encoder).
 encoder_model: HuggingFaceTB/SmolLM2-135M

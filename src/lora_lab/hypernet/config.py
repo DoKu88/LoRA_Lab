@@ -32,7 +32,9 @@ class HyperConfig:
     alpha: int = 32
 
     # --- hypernetwork architecture ------------------------------------------
-    parameterization: str = "vera"     # vera | lowrank | full (the S2 ladder)
+    parameterization: str = "lowrank"  # lowrank (default) | vera | full (the S2 ladder).
+                                       # lowrank: vera can't reconstruct a target ΔW (frozen
+                                       # random basis), full OOMs — see phase-2-sprint-plan.md.
     encoder_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     layer_dim: int = 16
     module_dim: int = 8

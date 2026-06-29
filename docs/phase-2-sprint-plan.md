@@ -48,7 +48,7 @@ Train a **text-conditioned hypernetwork** that, in a **single forward pass**, ge
 **Contract: every Phase-2 run, from the S1 tiny-plumbing smoke to the S5 gate, is a W&B run.** All logging goes through `RunLogger` (`train/run_logger.py`) — best-effort / non-blocking, offline fallback, mirrored to a local `metrics.jsonl` so nothing is lost if W&B is unreachable. One W&B run per launch; runs are **grouped by sprint/stage** and **tagged** with the config name, objective (`reconstruction` / `sft`), base model, and the split `lock_hash`. No metric is left to stdout-only.
 
 **Logged on every run:**
-- **Config snapshot** — the full resolved `HyperConfig` + YAML: seed, rank, target modules, output parameterization (VeRA / low-rank / full), steps, lr, batch, base model, `lock_hash`, `wandb_project`/`wandb_mode`.
+- **Config snapshot** — the full resolved `HyperConfig` + YAML: seed, rank, target modules, output parameterization (low-rank / VeRA / full), steps, lr, batch, base model, `lock_hash`, `wandb_project`/`wandb_mode`.
 - **Per-step scalars** (every step, stage-tagged) — `recon/loss` (S3) or `sft/loss` (S4), learning rate, grad norm, step time (s/step), and examples-per-second throughput.
 - **Memory traces** (`utils/vram`) — peak & current VRAM and RAM, logged per eval interval and at peak; this is the series behind figure **F4** (peak-VRAM-per-phase).
 - **Validation** — val-split metric at each checkpoint-selection interval + the early-stop signal.
@@ -119,14 +119,14 @@ rather than memorize a few tasks; it is the precondition for the held-out axes i
 | Recon warmup (S3) | ~2,000 | **~20–30 min** | no base forward → cheap; scales with hypernet size. |
 | SFT meta-train (S4) | ~6,000 (batch 4) | **~5–7.5 hr** | base-backprop-bound (~3–4.5 s/step); independent of #tasks, scales with #steps. |
 | Held-out eval (S5) | 30 tasks × 4 conditions | **~1–2 hr** | generation + scoring on the held-out test splits. |
-| **Total (default VeRA)** | — | **< 10 hr** | T2L-M parameterization ≈ same; T2L-L adds OOM-risk/throttle (see sizing doc). |
+| **Total (default low-rank LoRA)** | — | **< 10 hr** | the VeRA rung is cheaper but can't reconstruct a target ΔW; full A/B (T2L-L) adds OOM-risk/throttle (see sizing doc). |
 
 ### 5. Charts, figures & tables we will output (→ `results/phase2/`, `docs/phase-2-findings.md`)
 
 **Tables**
 - **T1 — Four-way held-out gate table** (primary): per-task `generated / oracle / base / retrieval` score, margin-vs-retrieval, margin-vs-base, verdict. `{csv,parquet,md}`.
 - **T2 — Per-axis gate summary**: mean score + margin grouped by held-out axis (format / language / domain) + aggregate, with the pass/fail verdict per axis.
-- **T3 — Hypernet size & memory**: param count + peak VRAM per parameterization (VeRA vs full), measured (replaces the predicted sizing-options table).
+- **T3 — Hypernet size & memory**: param count + peak VRAM per parameterization (low-rank vs VeRA vs full), measured (replaces the predicted sizing-options table).
 - **T4 — Data-scale summary**: tasks & example-passes per split (the §1 numbers, as run).
 - **T5 — SFT-vs-reconstruction-vs-base held-out comparison**: per-held-out-task score for the **SFT-trained** hypernetwork vs the **reconstruction-trained (S3 warmup)** hypernetwork vs the **base** lower bound (oracle + retrieval as reference columns); margins SFT−reconstruction and SFT−base; aggregate + per-axis means. The project's *direct empirical test* of the SFT-over-reconstruction thesis (notes.md §C2; T2L §5.4 / Table 6) on **our** library — not just the asserted claim. `{csv,parquet,md}`.
 - **T6 — Cost comparison across the four methods**: **training time · trainable parameters · final training loss** for the four adapter methods of the SFT-vs-reconstruction comparison (SFT-generated / reconstruction-generated / oracle / base). Surfaces the cost story behind the thesis — both hypernetwork variants share one parameter footprint and emit an adapter in a single forward pass (differing only in objective + training time), while the oracle pays a fresh per-task LoRA run and base trains nothing. Losses are each method's *own* objective (SFT/oracle = token CE, reconstruction = L1 on ΔW) → not directly comparable in absolute terms. `{csv,parquet,md}`.
@@ -188,11 +188,11 @@ Each sprint lists: **(1) Goal · (2) Requirements · (3) Definition of done · (
 2. **Requirements:**
    - **Encoder** (`encoder.py`): task description → fixed task embedding. Default: a frozen sentence encoder (small, cheap); record the choice. The embedding conditions generation (§1.1).
    - **Conditioning scheme** (§1.9 HyperLoader, §1.6 HypeLoRA): generate per **(layer, module)** via learned layer/module embeddings + the task embedding through a shared trunk and small output heads — so cross-layer structure is shared, not 32× independent generators.
-   - **Output-parameterization options to pick from** (start smallest, grow only if the gate fails):
-     - **(a) VeRA-style** — frozen random A shared across tasks, hypernetwork emits only the small B / per-layer scaling vectors (smallest output; §2.4).
-     - **(b) Low-rank factored heads** — emit A and B but from a low-rank head (fewer hypernetwork params than dense heads).
-     - **(c) Full A/B** — emit both matrices densely (largest; the T2L default).
-     Commit to the smallest that the plumbing supports; note the fallback ladder.
+   - **Output-parameterization — committed choice: low-rank factored heads (LoRA).** The ladder (smallest output first), and why the smallest rung is *not* the choice:
+     - **(a) VeRA-style** — frozen random A *and* B shared across tasks; the hypernetwork emits only small scaling vectors (smallest output; §2.4). **Rejected:** a single-target overfit diagnostic showed VeRA *cannot reconstruct* a target ΔW (1.0000 → 0.9999) — it can only reweight fixed random directions, never reshape them to match a specific adapter. A hypernetwork that can't represent the library adapters fails the warmup and cascades into a dead SFT gate.
+     - **(b) Low-rank factored heads (LoRA) ⭐ committed** — emit real A and B through a low-rank bottleneck (fewer hypernetwork params than dense heads). The same diagnostic fit the target cleanly (1.0000 → 0.1966). ~151 M params on the Mistral-7B q/k/v spec — fits SFT on 32 GB.
+     - **(c) Full A/B** — emit both matrices densely (largest; the T2L default). **Rejected:** ~2.65 B trainable params → OOM (> 32 GB with Adam states).
+     Commit to **low-rank LoRA** — the smallest rung that can actually reconstruct; VeRA/Full remain in the code as the documented (rejected) ladder rungs.
    - Match the library's LoRA shape exactly (rank 16, q/k/v_proj) so generated and library/oracle adapters are directly comparable in Phase 3.
    - **W&B:** log the committed architecture config + hypernetwork param count per parameterization (the measured inputs to table **T3**) as a W&B run/summary, so the size-vs-memory choice is tracked, not just noted in the doc.
 3. **Definition of done:** `model.py` generates a full Mistral-7B-shaped adapter from one description in a single forward; parameter count of the hypernetwork is reported; the output parameterization is committed in `configs/phase2/` with the fallback ladder documented; **the param count + chosen parameterization (the T3 inputs) are logged to W&B as run/summary fields.** **Claude then notifies the user to confirm on the W&B website.**
@@ -238,7 +238,7 @@ Each sprint lists: **(1) Goal · (2) Requirements · (3) Definition of done · (
    - **Cost comparison table (T6).** Assemble a **training-time / trainable-params / final-loss** table across these same four methods (SFT-generated, reconstruction-generated, oracle, base) — pulling training time + final loss from the S3/S4 W&B runs, param counts from S2/S4, and the oracle's per-task cost from Phase 1. Base trains nothing ("—"); flag that the losses are different objectives (SFT/oracle token CE vs reconstruction L1 on ΔW) and **not directly comparable** in absolute terms. This quantifies the amortization argument: one hypernetwork run serves all tasks vs a fresh oracle LoRA per task.
    - **Failure-mode analysis (§A.12):** where generated loses, is it bad task *identification* (retrieval would've picked a better adapter → an encoder/conditioning problem) or bad *execution* (right intent, weak weights → an output-parameterization/training problem)? This decides what to fix.
    - **W&B:** log the four-way per-task scores, per-axis margins, and the **gate verdict** as W&B summary fields, and upload tables **T1–T6** + figures **F1–F6** as W&B Tables / media (per the [tracking contract](#wb-experiment-tracking--log-everything)) — the gate result **and the SFT-vs-reconstruction comparison** live in W&B, not only in the findings doc.
-3. **Definition of done:** the four-way held-out table is committed; the gate verdict (pass/fail) is stated with the margin; if it fails, the failure-mode analysis points to the specific fix (per notes.md: smaller VeRA target §2.4, DoRA §2.3, or better distillation) **before** any Phase-3 work; **table T5 + figure F6 (SFT vs reconstruction vs base) and the T6 cost comparison (training time / params / loss across the four methods) are committed, with the SFT−reconstruction margin stated; the four-way per-task scores, per-axis margins, and the gate verdict are logged as W&B summary fields, and tables T1–T6 + figures F1–F6 are uploaded as W&B Tables / media.** **Claude then notifies the user to confirm the tables/figures + gate verdict on the W&B website.**
+3. **Definition of done:** the four-way held-out table is committed; the gate verdict (pass/fail) is stated with the margin; if it fails, the failure-mode analysis points to the specific fix (per notes.md: a different output parameterization — e.g. a shared-head T2L-M §2.4, DoRA §2.3 — or better distillation) **before** any Phase-3 work; **table T5 + figure F6 (SFT vs reconstruction vs base) and the T6 cost comparison (training time / params / loss across the four methods) are committed, with the SFT−reconstruction margin stated; the four-way per-task scores, per-axis margins, and the gate verdict are logged as W&B summary fields, and tables T1–T6 + figures F1–F6 are uploaded as W&B Tables / media.** **Claude then notifies the user to confirm the tables/figures + gate verdict on the W&B website.**
 4. **Required testing:** all four conditions eval'd on the *identical* held-out split (same split hash as Phase 1); retrieval never retrieves a held-out task (train-split index only); generated and oracle adapters share the exact LoRA shape (Phase-3 comparability); the gate comparison is computed over the same task set for all conditions; **the reconstruction (S3) checkpoint is eval'd on the identical held-out split as the SFT checkpoint (same metric + harness), and T5 has all of {SFT, reconstruction, base} for every held-out task (no missing cell); **T6 has training-time + params + loss for all four methods (base's training cells are "—", not blank);** assert the gate verdict + all four condition scores are present in the W&B run summary, and every table (T1–T6) and figure (F1–F6) was uploaded (no missing artifact).**
 
 ### Sprint 6 — Findings, ablations entry & artifact  *(needs S5)*
@@ -346,11 +346,14 @@ Aggregates T1 by generalization axis; the per-axis verdict surfaces *where* gene
 
 ### T3 — Hypernet size & memory *(measured in S2/S4)*
 
+Param counts are the real S2 measurements (`results/phase2/hypernet_sizes.md`);
+the peak-VRAM column is illustrative until the S4 run measures it.
+
 | Output parameterization | Hypernet params (M) | Output / task (params) | Peak VRAM, S4 (GB) | Notes |
 |---|--:|--:|--:|---|
-| **VeRA-style** *(default)* | 4.8 | ~0.05 M (B + scales) | 24.6 | fits with headroom |
-| Low-rank factored heads | 11.2 | full A/B (r=16) | 28.1 | fallback (b) |
-| Full A/B (T2L-L) | 32.5 | full A/B dense | 31.4 | OOM-risk → throttle batch |
+| **Low-rank factored heads (LoRA)** *(default)* | 151.4 | full A/B (r=16) via bottleneck | ~28 | **committed** — fits SFT on 32 GB; reconstructs a target ΔW |
+| VeRA-style | 55.7 | scales only (d, b) | ~25 | rejected — frozen random basis, can't reconstruct |
+| Full A/B (T2L-L) | 2651.9 | full A/B dense | — | rejected — OOM (> 32 GB with Adam states) |
 
 ### T4 — Data-scale summary *(as run)*
 
@@ -377,16 +380,16 @@ Same held-out tasks, three conditions side-by-side (oracle + retrieval as refere
 
 ### T6 — Cost comparison across the four methods
 
-Training cost & footprint for the four adapter methods in the SFT-vs-reconstruction comparison. Both hypernetwork rows share **one** 4.8 M-param model and emit an adapter in a single forward pass — only the **objective + training time** differ. The oracle pays a fresh 9.4 M-param LoRA run *per task*; base trains nothing.
+Training cost & footprint for the four adapter methods in the SFT-vs-reconstruction comparison. Both hypernetwork rows share **one** 151.4 M-param model and emit an adapter in a single forward pass — only the **objective + training time** differ. The oracle pays a fresh 9.4 M-param LoRA run *per task*; base trains nothing.
 
 | Method | Adapter produced via | Training time (wall-clock) | Trainable params (count) | Final training loss (native objective units) | Per-task inference (latency) |
 |---|---|--:|--:|--:|:--|
-| SFT-generated (hypernetwork) | 1 hypernet forward | ~5–7.5 hr · one-time, amortized over all tasks | 4.8 M (VeRA) | token CE ≈ 1.12 (`sft/loss`) | ~1 forward (ms) |
-| Reconstruction-generated (hypernetwork) | 1 hypernet forward | ~20–30 min · one-time | 4.8 M (VeRA) | L1 on ΔW ≈ 2.4e-4 (`recon/loss`) | ~1 forward (ms) |
+| SFT-generated (hypernetwork) | 1 hypernet forward | ~5–7.5 hr · one-time, amortized over all tasks | 151.4 M (low-rank LoRA) | token CE ≈ 1.12 (`sft/loss`) | ~1 forward (ms) |
+| Reconstruction-generated (hypernetwork) | 1 hypernet forward | ~20–30 min · one-time | 151.4 M (low-rank LoRA) | rel-Frobenius on ΔW ≈ 0.20 (`recon/loss`) | ~1 forward (ms) |
 | Oracle (per-task LoRA) | train a LoRA per task | ~15 min/task × N tasks (Phase 1) | 9.4 M per adapter | token CE ≈ 0.78 | — (pre-trained; not zero-shot) |
 | Base (no adapter) | — | — | 0 | — | — |
 
-> **Loss caveat:** the loss column lists each method's *own* training objective — SFT and oracle minimize token cross-entropy, reconstruction minimizes L1 on the weight delta — so the absolute values are **not directly comparable**. The table's real point is the **training-time + parameter** asymmetry: one amortized 4.8 M hypernetwork run that generalizes, vs a 9.4 M oracle run *per task* that doesn't transfer.
+> **Loss caveat:** the loss column lists each method's *own* training objective — SFT and oracle minimize token cross-entropy, reconstruction minimizes relative-Frobenius error on the weight delta — so the absolute values are **not directly comparable**. The table's real point is the **training-time + parameter** asymmetry: one amortized 151.4 M hypernetwork run that generalizes, vs a 9.4 M oracle run *per task* that doesn't transfer.
 
 ---
 
