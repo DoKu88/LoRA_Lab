@@ -19,7 +19,7 @@ from typing import Any
 
 import torch
 
-from .encoder import normalize_embeddings
+from .model import normalize_embeddings
 
 
 @dataclass

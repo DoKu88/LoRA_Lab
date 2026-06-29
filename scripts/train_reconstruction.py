@@ -22,9 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from lora_lab.hypernet.config import HyperConfig  # noqa: E402
-from lora_lab.hypernet.meta_train import SyntheticReconSampler  # noqa: E402
-from lora_lab.hypernet.runner import run_training  # noqa: E402
-from lora_lab.hypernet.samplers import LibraryReconSampler  # noqa: E402
+from lora_lab.hypernet.train import train  # noqa: E402
 
 
 def main() -> int:
@@ -49,12 +47,8 @@ def main() -> int:
     if args.wandb:
         cfg.wandb_mode = args.wandb
 
-    def sampler_factory(cfg, base, tok, specs):
-        if args.synthetic:
-            return SyntheticReconSampler(specs, rank=cfg.rank, seed=cfg.seed)
-        return LibraryReconSampler(cfg.split_path, cfg.library_path, seed=cfg.seed)
-
-    run_training(cfg, sampler_factory, allow_gpu=args.allow_gpu, steps=args.steps, stage=args.stage)
+    train(cfg, allow_gpu=args.allow_gpu, steps=args.steps,
+          synthetic=args.synthetic, stage=args.stage)
     return 0
 
 

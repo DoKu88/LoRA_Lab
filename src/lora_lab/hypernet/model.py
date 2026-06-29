@@ -1,22 +1,148 @@
-"""The hypernetwork — (task-description embedding) -> per-target LoRA A/B.
+"""The Text-to-LoRA model: text description -> LoRA A/B for every target Linear.
 
-A shared trunk over the task embedding plus learned layer and module embeddings
-feed a per-target output head that emits LoRA factors (A:(rank,in), B:(out,rank))
-for every targeted Linear, in a single forward pass. The B path is zero-init so
-ΔW = 0 at start (the no-op invariant); the A path varies with the task embedding
-from the start. ``delta_w`` forms the effective weight delta ΔW = scaling·(B·A).
+Three pieces:
+  MeanPoolEncoder     frozen text encoder: description -> fixed task embedding
+  *Head               output heads that map a conditioning vector -> (A, B)
+  HyperLoRAGenerator  shared trunk + layer/module embeddings + per-target head
+
+The generator emits, in one forward pass, ``{key: (A:(rank,in), B:(out,rank))}``
+for every targeted Linear. The B path is zero-init so ΔW = 0 at start.
 """
 
 from __future__ import annotations
 
 import re
+from typing import Protocol
 
 import torch
 import torch.nn as nn
+from transformers import AutoModel, AutoTokenizer
 
-from .heads import HEADS
+
+# ---------------------------------------------------------------------------
+# Encoder: task description -> fixed embedding (frozen; conditioning only)
+# ---------------------------------------------------------------------------
+class TaskEncoder(Protocol):
+    """encode a list of descriptions -> (N, dim) embeddings; expose ``dim``."""
+
+    dim: int
+
+    def encode(self, descriptions: list[str]) -> torch.Tensor: ...
 
 
+class MeanPoolEncoder:
+    """Mean-pool a frozen HF encoder's last hidden state over real tokens."""
+
+    def __init__(self, model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
+                 device: str = "cpu", max_len: int = 128):
+        self.device = device
+        self.max_len = max_len
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        if self.tokenizer.pad_token is None:  # decoder-only encoders (e.g. SmolLM2) lack one
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+        self.model = AutoModel.from_pretrained(model_name).to(device).eval()
+        for param in self.model.parameters():
+            param.requires_grad_(False)
+        self.dim = int(self.model.config.hidden_size)
+
+    @torch.no_grad()
+    def encode(self, descriptions: list[str]) -> torch.Tensor:
+        batch = self.tokenizer(descriptions, return_tensors="pt", padding=True,
+                               truncation=True, max_length=self.max_len).to(self.device)
+        out = self.model(**batch).last_hidden_state          # (N, T, H)
+        mask = batch["attention_mask"].unsqueeze(-1).float()  # (N, T, 1)
+        summed = (out * mask).sum(1)
+        counts = mask.sum(1).clamp(min=1.0)
+        return summed / counts                                # (N, H)
+
+
+def normalize_embeddings(embeddings: torch.Tensor) -> torch.Tensor:
+    """L2-normalize rows — used by the retrieval baseline + as a stable
+    conditioning input."""
+    return torch.nn.functional.normalize(embeddings, dim=-1)
+
+
+# ---------------------------------------------------------------------------
+# Output heads: conditioning vector -> LoRA (A, B). Smallest-output first.
+# Committed default is LowRankABHead (the smallest that can reconstruct a target
+# ΔW). All heads zero-init the B path so ΔW = 0 at start (the no-op invariant).
+# ---------------------------------------------------------------------------
+class FullABHead(nn.Module):
+    """Dense: conditioning -> A (rank·in) and B (out·rank). Largest output."""
+
+    def __init__(self, cond_dim: int, in_features: int, out_features: int, rank: int):
+        super().__init__()
+        self.in_features, self.out_features, self.rank = in_features, out_features, rank
+        self.a_head = nn.Linear(cond_dim, rank * in_features)
+        self.b_head = nn.Linear(cond_dim, out_features * rank)
+        nn.init.zeros_(self.b_head.weight)
+        nn.init.zeros_(self.b_head.bias)
+
+    def forward(self, conditioning: torch.Tensor):
+        lora_a = self.a_head(conditioning).view(self.rank, self.in_features)
+        lora_b = self.b_head(conditioning).view(self.out_features, self.rank)
+        return lora_a, lora_b
+
+
+class LowRankABHead(nn.Module):
+    """Low-rank: conditioning -> a bottleneck code -> A, B (the default).
+
+    The generated A = a_from_code(code), B = b_from_code(code) keep the *learned*
+    head small: O(bottleneck_dim·(in+out)) instead of O(cond_dim·rank·(in+out)).
+    """
+
+    def __init__(self, cond_dim: int, in_features: int, out_features: int, rank: int,
+                 bottleneck_dim: int = 16):
+        super().__init__()
+        self.in_features, self.out_features, self.rank = in_features, out_features, rank
+        self.bottleneck_dim = bottleneck_dim
+        self.code = nn.Linear(cond_dim, bottleneck_dim)
+        self.a_from_code = nn.Linear(bottleneck_dim, rank * in_features, bias=False)
+        self.b_from_code = nn.Linear(bottleneck_dim, out_features * rank, bias=False)
+        nn.init.zeros_(self.b_from_code.weight)
+
+    def forward(self, conditioning: torch.Tensor):
+        code = torch.tanh(self.code(conditioning))
+        lora_a = self.a_from_code(code).view(self.rank, self.in_features)
+        lora_b = self.b_from_code(code).view(self.out_features, self.rank)
+        return lora_a, lora_b
+
+
+class VeRAHead(nn.Module):
+    """VeRA-style: BOTH A and B are frozen random buffers; the head generates
+    only the two scaling vectors.
+
+    ΔW = scaling · (Λ_b B)(Λ_d A) with Λ_d = diag(d):(rank), Λ_b = diag(b):(out).
+    We fold the scalings into the returned factors — A_eff = A ⊙ d (per-row),
+    B_eff = B ⊙ b (per-row) — so the (A, B) interface is unchanged. The only
+    learned output is (rank + out) per target. b is zero-init => ΔW = 0 at start.
+    Smallest output, but can only reweight fixed directions, so it cannot
+    reconstruct a specific adapter (hence not the default).
+    """
+
+    def __init__(self, cond_dim: int, in_features: int, out_features: int, rank: int):
+        super().__init__()
+        self.in_features, self.out_features, self.rank = in_features, out_features, rank
+        self.register_buffer("frozen_a", torch.randn(rank, in_features) / (in_features ** 0.5))
+        self.register_buffer("frozen_b", torch.randn(out_features, rank) / (rank ** 0.5))
+        self.d_scale = nn.Linear(cond_dim, rank)             # per-rank scale on A
+        self.b_scale = nn.Linear(cond_dim, out_features)     # per-output scale on B
+        nn.init.ones_(self.d_scale.bias)
+        nn.init.zeros_(self.b_scale.weight)
+        nn.init.zeros_(self.b_scale.bias)                  # b=0 => ΔW=0 at init
+
+    def forward(self, conditioning: torch.Tensor):
+        lora_a = self.frozen_a * self.d_scale(conditioning).view(self.rank, 1)
+        lora_b = self.frozen_b * self.b_scale(conditioning).view(self.out_features, 1)
+        return lora_a, lora_b
+
+
+HEADS = {"full": FullABHead, "lowrank": LowRankABHead, "vera": VeRAHead}
+
+
+# ---------------------------------------------------------------------------
+# Generator: (task embedding) -> per-target (A, B)
+# ---------------------------------------------------------------------------
 def delta_w(lora_a: torch.Tensor, lora_b: torch.Tensor, scaling: float) -> torch.Tensor:
     """ΔW = scaling · (B · A), shape (out, in) — the effective weight delta."""
     return scaling * (lora_b @ lora_a)
@@ -37,14 +163,11 @@ class HyperLoRAGenerator(nn.Module):
     """Generator: (task-description embedding) -> per-target LoRA A/B.
 
     A **shared trunk** over the task embedding plus learned **layer** and
-    **module** embeddings feeds a per-target output head (default low-rank A/B —
-    generates real A/B through a bottleneck, ~151 M on Mistral-7B; the smaller
-    VeRA rung can't reconstruct a target ΔW, so it is not the default).
+    **module** embeddings feeds a per-target output head (default low-rank A/B).
     Cross-layer/module structure is shared through the trunk and the embeddings,
     not one independent generator per target. Forward contract:
     ``task_emb -> {key: (A:(rank,in), B:(out,rank))}``, with the B path zero-init
-    so ΔW = 0 at start (the no-op invariant). Conditioning is live at init (the A
-    path varies with the task embedding); the B path opens up during training.
+    so ΔW = 0 at start. The A path varies with the task embedding from init.
     """
 
     def __init__(

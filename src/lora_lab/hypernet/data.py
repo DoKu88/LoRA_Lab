@@ -1,13 +1,12 @@
-"""Meta-training samplers — feed the loop from the library data.
+"""Samplers — feed the training loop a batch of (description, ground-truth).
 
-LibraryReconSampler: for each TRAIN-split task, load its Lots-of-LoRAs adapter's
-A/B tensors and yield (description, target_adapter) for the reconstruction
-objective. SNISFTSampler: tokenize a train task's SNI batch with prompt-masking
-and yield (description, batch) for the SFT objective.
+LibraryReconSampler  reconstruction: (descriptions, [target LoRA adapters])
+SNISFTSampler        SFT: (description, tokenized+prompt-masked example batch)
+SyntheticReconSampler random targets for a CPU smoke (no downloads)
 
-Both read only the **train** split — never the held-out tasks (the leakage
-contract). Adapter loading is cached. The PEFT->base key mapping is pure logic
-(``parse_lora_state_dict``).
+Each exposes ``batch(n)`` returning ``(descriptions, targets)`` for one step.
+Samplers read a single split of the locked split file (``train`` or ``val``);
+adapter loading is cached. ``parse_lora_state_dict`` maps PEFT keys to base keys.
 """
 
 from __future__ import annotations
@@ -37,9 +36,8 @@ def _base_key(peft_key: str, suffix: str) -> str:
 def parse_lora_state_dict(state_dict: dict[str, torch.Tensor]) -> dict[str, tuple[torch.Tensor, torch.Tensor]]:
     """{peft_key: tensor} -> {base_module_key: (A:(rank,in), B:(out,rank))}.
 
-    Keys come out matching the base model's ``named_modules`` paths (e.g.
-    ``model.layers.0.self_attn.q_proj``), so they align 1:1 with the keys the
-    HyperLoRAGenerator produces from ``target_specs``.
+    Keys come out matching the base model's ``named_modules`` paths, so they
+    align 1:1 with the keys the generator produces from ``target_specs``.
     """
     factor_pairs: dict[str, dict[str, torch.Tensor]] = {}
     for key, tensor in state_dict.items():
@@ -51,9 +49,10 @@ def parse_lora_state_dict(state_dict: dict[str, torch.Tensor]) -> dict[str, tupl
             for base, factors in factor_pairs.items() if "A" in factors and "B" in factors}
 
 
-def _load_split_train(split_path: str | Path) -> list[str]:
+def _split_tasks(split_path: str | Path, which: str) -> list[str]:
+    """Task names in one split (``train`` / ``val`` / ``held_out``)."""
     raw = yaml.safe_load(Path(split_path).read_text()) or {}
-    return list((raw.get("train") or {}).keys())
+    return list((raw.get(which) or {}).keys())
 
 
 def _load_library(library_path: str | Path) -> dict[str, dict]:
@@ -62,15 +61,15 @@ def _load_library(library_path: str | Path) -> dict[str, dict]:
 
 
 class LibraryReconSampler:
-    """Yield (description, target_adapter) over the TRAIN split for reconstruction."""
+    """Reconstruction targets: each task's library LoRA A/B tensors."""
 
     def __init__(self, split_path: str | Path, library_path: str | Path,
-                 *, seed: int = 0):
-        train = _load_split_train(split_path)
+                 *, split: str = "train", seed: int = 0):
+        tasks = _split_tasks(split_path, split)
         library = _load_library(library_path)
-        # keep only train tasks that have an adapter + description recorded
-        self.tasks = [task for task in train if task in library and library[task].get("adapter_repo")
-                      and library[task].get("description")]
+        # keep only tasks with an adapter + description recorded
+        self.tasks = [task for task in tasks if task in library
+                      and library[task].get("adapter_repo") and library[task].get("description")]
         self.library = library
         self.rng = random.Random(seed)
         self._cache: dict[str, dict] = {}
@@ -81,31 +80,28 @@ class LibraryReconSampler:
             self._cache[task] = parse_lora_state_dict(load_file(path))
         return self._cache[task]
 
-    def sample(self) -> tuple[str, dict]:
-        task = self.rng.choice(self.tasks)
-        return self.library[task]["description"], self._load_adapter(task)
+    def batch(self, n: int) -> tuple[list[str], list[dict]]:
+        tasks = [self.rng.choice(self.tasks) for _ in range(n)]
+        descriptions = [self.library[task]["description"] for task in tasks]
+        targets = [self._load_adapter(task) for task in tasks]
+        return descriptions, targets
 
     def __len__(self) -> int:
         return len(self.tasks)
 
 
 class SNISFTSampler:
-    """Yield (description, prompt-masked batch) over the TRAIN split for SFT.
-
-    Reuses the ``data/sni`` pipeline (chat-template + prompt masking) so SFT
-    trains on exactly the task data the library adapters were trained for.
-    """
+    """SFT batches: a task's SNI examples, chat-templated + prompt-masked."""
 
     def __init__(self, split_path: str | Path, library_path: str | Path, tokenizer,
-                 *, batch_size: int = 4, max_seq_len: int = 512, seed: int = 0):
-        train = _load_split_train(split_path)
+                 *, split: str = "train", max_seq_len: int = 512, seed: int = 0):
+        tasks = _split_tasks(split_path, split)
         library = _load_library(library_path)
         self.tokenizer = tokenizer
         self.collate = DataCollatorForSupervised(tokenizer)
-        self.batch_size = batch_size
         self.rng = random.Random(seed)
         self.tasks, self._bundles, self.library = [], {}, library
-        for task in train:
+        for task in tasks:
             spec = library.get(task)
             if not (spec and spec.get("dataset_repo") and spec.get("description")):
                 continue
@@ -115,11 +111,34 @@ class SNISFTSampler:
             self._bundles[task] = get_dataset(task_spec, tokenizer, max_seq_len=max_seq_len)
             self.tasks.append(task)
 
-    def sample(self) -> tuple[str, dict]:
+    def batch(self, n: int) -> tuple[list[str], dict]:
         task = self.rng.choice(self.tasks)
-        train = self._bundles[task].train
-        picks = [self.rng.choice(train) for _ in range(min(self.batch_size, len(train)))]
-        return self.library[task]["description"], self.collate(picks)
+        examples = self._bundles[task].train
+        picks = [self.rng.choice(examples) for _ in range(min(n, len(examples)))]
+        return [self.library[task]["description"]], self.collate(picks)
 
     def __len__(self) -> int:
         return len(self.tasks)
+
+
+class SyntheticReconSampler:
+    """Random target adapters + dummy descriptions — a CPU smoke (no downloads)."""
+
+    def __init__(self, target_specs: dict[str, tuple[int, int]], rank: int, seed: int = 0):
+        self.specs = target_specs
+        self.rank = rank
+        self.torch_generator = torch.Generator().manual_seed(seed)
+        self._descriptions = ["classify sentiment", "translate text", "answer the question",
+                              "summarize the passage", "detect entailment"]
+        self._index = 0
+
+    def batch(self, n: int) -> tuple[list[str], list[dict]]:
+        descriptions, targets = [], []
+        for _ in range(n):
+            target = {key: (torch.randn(self.rank, in_features, generator=self.torch_generator),
+                            torch.randn(out_features, self.rank, generator=self.torch_generator))
+                      for key, (in_features, out_features) in self.specs.items()}
+            descriptions.append(self._descriptions[self._index % len(self._descriptions)])
+            self._index += 1
+            targets.append(target)
+        return descriptions, targets

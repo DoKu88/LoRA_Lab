@@ -45,6 +45,8 @@ class HyperConfig:
     batch_size: int = 4
     grad_accum: int = 1
     max_seq_len: int = 512
+    val_every: int = 100               # validate every N steps
+    val_batches: int = 5               # batches averaged per validation
     seed: int = 42
     gradient_checkpointing: bool = True   # base-backprop memory lever (SFT)
     warmup_from: str | None = None        # path to a recon-warmup hypernet checkpoint

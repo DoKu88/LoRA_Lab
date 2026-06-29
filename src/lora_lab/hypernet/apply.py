@@ -15,8 +15,6 @@ step with no parameter surgery.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -88,13 +86,3 @@ def remove(model: nn.Module, handles) -> None:
     for name, original in handles:
         parent, attr = _last_attr(model, name)
         setattr(parent, attr, original)
-
-
-@contextmanager
-def lora_injected(model: nn.Module, target_modules, registry: LoRARegistry, *, scaling: float):
-    """Context manager: inject for the duration, restore on exit."""
-    handles = inject(model, target_modules, registry, scaling=scaling)
-    try:
-        yield handles
-    finally:
-        remove(model, handles)

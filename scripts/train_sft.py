@@ -18,8 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from lora_lab.hypernet.config import HyperConfig  # noqa: E402
-from lora_lab.hypernet.runner import run_training  # noqa: E402
-from lora_lab.hypernet.samplers import SNISFTSampler  # noqa: E402
+from lora_lab.hypernet.train import train  # noqa: E402
 
 
 def main() -> int:
@@ -40,11 +39,7 @@ def main() -> int:
     if args.wandb:
         cfg.wandb_mode = args.wandb
 
-    def sampler_factory(cfg, base, tok, specs):
-        return SNISFTSampler(cfg.split_path, cfg.library_path, tok,
-                             batch_size=cfg.batch_size, max_seq_len=cfg.max_seq_len, seed=cfg.seed)
-
-    run_training(cfg, sampler_factory, allow_gpu=args.allow_gpu, steps=args.steps, stage=args.stage)
+    train(cfg, allow_gpu=args.allow_gpu, steps=args.steps, stage=args.stage)
     return 0
 
 
