@@ -28,17 +28,8 @@ from .data import LibraryReconSampler, SNISFTSampler, SyntheticReconSampler
 from .model import HyperLoRAGenerator, MeanPoolEncoder, delta_w
 
 
-def assert_run_allowed(cfg, allow_gpu: bool) -> None:
-    """Refuse the GPU / 4-bit path unless the user opts in with ``--allow-gpu``."""
-    if (getattr(cfg, "device", "cpu") == "cuda" or getattr(cfg, "load_in_4bit", False)) \
-            and not allow_gpu:
-        raise RuntimeError("refusing GPU/4-bit run without --allow-gpu")
-
-
-def build_model(cfg, *, allow_gpu):
+def build_model(cfg):
     """Load (base, tokenizer, encoder, generator, specs); warm-start if configured."""
-    assert_run_allowed(cfg, allow_gpu)
-
     tokenizer = AutoTokenizer.from_pretrained(cfg.base_model)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -149,9 +140,9 @@ def _build_logger(cfg, stage):
     return RunLogger(view)
 
 
-def train(cfg, *, allow_gpu=False, steps=None, synthetic=False, stage=None):
+def train(cfg, *, steps=None, synthetic=False, stage=None):
     """Train the hypernetwork for ``cfg.objective`` and save the checkpoint."""
-    base, tokenizer, encoder, generator, specs = build_model(cfg, allow_gpu=allow_gpu)
+    base, tokenizer, encoder, generator, specs = build_model(cfg)
     device, scaling = cfg.device, generator.scaling
 
     train_data = _load_samples(cfg, tokenizer, specs, split="train", synthetic=synthetic)

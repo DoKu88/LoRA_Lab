@@ -4,9 +4,9 @@
 Generate a LoRA from a task description, apply it to the frozen 4-bit base, run
 the task batch, and backprop the task cross-entropy THROUGH the base into the
 hypernetwork. Warm-starts from a reconstruction checkpoint if ``warmup_from`` is
-set in the config. GPU-heavy; gated behind ``--allow-gpu``.
+set in the config. GPU-heavy.
 
-    python scripts/train_sft.py --config configs/phase2/sft-mistral.yaml --allow-gpu
+    python scripts/train_sft.py --config configs/phase2/sft-mistral.yaml
 """
 
 from __future__ import annotations
@@ -22,8 +22,6 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", required=True)
     ap.add_argument("--steps", type=int, default=None)
-    ap.add_argument("--allow-gpu", action="store_true",
-                    help="required to run the cuda/4-bit path")
     ap.add_argument("--wandb", choices=["online", "offline", "disabled"], default=None,
                     help="override the config's wandb_mode for this run")
     ap.add_argument("--stage", default=None, help="W&B group tag")
@@ -35,7 +33,7 @@ def main() -> int:
     if args.wandb:
         cfg.wandb_mode = args.wandb
 
-    train(cfg, allow_gpu=args.allow_gpu, steps=args.steps, stage=args.stage)
+    train(cfg, steps=args.steps, stage=args.stage)
     return 0
 
 

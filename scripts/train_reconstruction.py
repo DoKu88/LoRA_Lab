@@ -7,10 +7,10 @@ warm-starts from.
 
     # smoke (random synthetic targets, tiny model)
     python scripts/train_reconstruction.py \
-        --config configs/phase2/tiny-plumbing.yaml --synthetic --steps 5 --allow-gpu
+        --config configs/phase2/tiny-plumbing.yaml --synthetic --steps 5
 
     # the real reconstruction run (needs the library adapters + a GPU)
-    python scripts/train_reconstruction.py --config configs/phase2/recon-warmup.yaml --allow-gpu
+    python scripts/train_reconstruction.py --config configs/phase2/recon-warmup.yaml
 """
 
 from __future__ import annotations
@@ -26,10 +26,8 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", required=True)
     ap.add_argument("--steps", type=int, default=None)
-    ap.add_argument("--allow-gpu", action="store_true",
-                    help="required to run the cuda/4-bit path")
     ap.add_argument("--synthetic", action="store_true",
-                    help="use random synthetic targets instead of library adapters (CPU smoke)")
+                    help="use random synthetic targets instead of library adapters (smoke)")
     ap.add_argument("--wandb", choices=["online", "offline", "disabled"], default=None,
                     help="override the config's wandb_mode for this run")
     ap.add_argument("--stage", default=None, help="W&B group tag")
@@ -43,8 +41,7 @@ def main() -> int:
     if args.wandb:
         cfg.wandb_mode = args.wandb
 
-    train(cfg, allow_gpu=args.allow_gpu, steps=args.steps,
-          synthetic=args.synthetic, stage=args.stage)
+    train(cfg, steps=args.steps, synthetic=args.synthetic, stage=args.stage)
     return 0
 
 
