@@ -21,7 +21,7 @@ import torch
 from tqdm.auto import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
-from ..train.run_logger import RunLogger
+from ..utils.run_logger import RunLogger
 from ..utils.vram import cuda_mem_snapshot, reset_peak_memory
 from .apply import LoRARegistry, inject, remove, target_specs
 from .data import LibraryReconSampler, SNISFTSampler, SyntheticReconSampler
