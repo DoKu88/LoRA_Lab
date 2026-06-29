@@ -1,4 +1,4 @@
-# Phase 2 Sprint 3 — reconstruction warmup (L1 on ΔW vs train-split library LoRAs).
+# Phase 2 Sprint 3 — reconstruction warmup (relative Frobenius error on ΔW vs train-split library LoRAs).
 # Cheap: NO base forward pass — just regress generated ΔW onto each train task's
 # library adapter. Produces the init checkpoint the SFT run warm-starts from.
 # Train-split only (never touches held-out targets).

@@ -1,8 +1,8 @@
 """Meta-training loop (Sprint 3/4 skeleton) — sample -> generate -> objective -> step.
 
 The single loop that drives both objectives:
-  reconstruction (S3 warmup): L1 between generated ΔW and a target library LoRA;
-                              no base forward.
+  reconstruction (S3 warmup): relative Frobenius error between generated ΔW and a
+                              target library LoRA; no base forward.
   sft (S4 gate run):          apply the generated adapter to the frozen base, run
                               the task batch, backprop the task loss into the
                               hypernetwork.
@@ -35,6 +35,26 @@ class Sampler(Protocol):
     def sample(self) -> tuple[str, object]: ...
 
 
+def reconstruction_minibatch_loss(generator, sampler, encoder, batch_size, *, scaling, device):
+    """Average reconstruction error over a minibatch of LoRAs (standard SGD step).
+
+    Draws ``batch_size`` (description, target-adapter) pairs from the training set,
+    generates an adapter from each description, and returns the **mean** per-LoRA
+    relative-Frobenius error. This is the loss whose gradient updates the network:
+    one arbitrary LoRA per step is too noisy to learn the description->adapter map
+    (the gradients conflict and average to ~0, pinning the loss at 1.0); averaging
+    over a batch gives the shared, learnable signal.
+    """
+    samples = [sampler.sample() for _ in range(batch_size)]
+    task_embs = encoder.encode([description for description, _ in samples]).to(device)
+    total = task_embs.new_zeros(())
+    for index, (_, target) in enumerate(samples):
+        adapter = generator(task_embs[index])
+        target = {key: (a.to(device), b.to(device)) for key, (a, b) in target.items()}
+        total = total + reconstruction_loss(adapter, target, scaling=scaling)
+    return total / len(samples)
+
+
 def meta_train(
     generator,
     base,
@@ -46,16 +66,23 @@ def meta_train(
     lr: float,
     objective: str = "reconstruction",
     device: str = "cpu",
+    batch_size: int = 1,
     log_every: int = 10,
     log=print,
     logger=None,
+    progress: bool = False,
 ) -> list[float]:
     """Run ``steps`` of meta-training; return the per-step loss trace.
 
     ``generator`` trains; ``base`` stays frozen. For SFT we inject the generator's
     output as a live adapter so the task loss flows back into the generator only.
+    ``batch_size`` is the number of LoRAs averaged per reconstruction step (the
+    standard minibatch loss — see ``reconstruction_minibatch_loss``); the SFT path
+    samples one task per step (its own example batch lives inside the SFT sampler).
     If ``logger`` (a ``RunLogger``) is given, every step logs ``<objective>/loss``,
     lr, grad norm, step time, and the VRAM snapshot (the W&B tracking contract).
+    If ``progress`` is set, a tqdm bar (live loss in the postfix) replaces the
+    periodic ``step N/total`` printout.
     """
     if objective not in ("reconstruction", "sft"):
         raise ValueError(f"objective must be reconstruction|sft, got {objective!r}")
@@ -69,18 +96,24 @@ def meta_train(
     registry = LoRARegistry()
     handles = inject(base, target_modules, registry, scaling=scaling) if objective == "sft" else []
     losses: list[float] = []
-    try:
-        for step in range(steps):
-            t_step = time.time()
-            description, target = sampler.sample()
-            task_emb = encoder.encode([description]).to(device).squeeze(0)
-            adapter = generator(task_emb)
 
+    step_iter = range(steps)
+    pbar = None
+    if progress:
+        from tqdm.auto import tqdm
+        pbar = tqdm(step_iter, total=steps, desc=f"meta-train [{objective}]", unit="step")
+        step_iter = pbar
+    try:
+        for step in step_iter:
+            t_step = time.time()
             if objective == "reconstruction":
-                target = {k: (a.to(device), b.to(device)) for k, (a, b) in target.items()}
-                loss = reconstruction_loss(adapter, target, scaling=scaling)
-            else:  # sft — task loss through the frozen base
-                registry.set_adapter(adapter)
+                # mean error over a minibatch of LoRAs from the training set
+                loss = reconstruction_minibatch_loss(generator, sampler, encoder, batch_size,
+                                                     scaling=scaling, device=device)
+            else:  # sft — one task per step; task loss through the frozen base
+                description, target = sampler.sample()
+                task_emb = encoder.encode([description]).to(device).squeeze(0)
+                registry.set_adapter(generator(task_emb))
                 batch = {key: value.to(device) for key, value in target.items()}
                 loss = base(**batch).loss
 
@@ -102,9 +135,13 @@ def meta_train(
                     "gpu_mem_gb": round(snap["allocated_gb"], 4),
                     "gpu_mem_reserved_gb": round(snap["reserved_gb"], 4),
                 })
-            if (step + 1) % log_every == 0:
+            if pbar is not None:
+                pbar.set_postfix(loss=f"{losses[-1]:.5f}")
+            elif (step + 1) % log_every == 0:
                 log(f"[meta-train] step {step+1}/{steps} {objective} loss={losses[-1]:.5f}")
     finally:
+        if pbar is not None:
+            pbar.close()
         remove(base, handles)
     return losses
 

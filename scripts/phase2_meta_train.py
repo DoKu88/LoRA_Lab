@@ -99,7 +99,7 @@ def run(cfg: HyperConfig, *, allow_gpu: bool, synthetic: bool, steps: int | None
     logger = build_run_logger(cfg, stage=stage or cfg.objective)
     losses = meta_train(gen, base, cfg.target_modules, sampler, encoder,
                         steps=n, lr=cfg.lr, objective=cfg.objective, device=cfg.device,
-                        logger=logger)
+                        batch_size=cfg.batch_size, logger=logger, progress=True)
 
     out_dir = logger.output_dir
     torch.save(gen.state_dict(), out_dir / "hypernet.pt")

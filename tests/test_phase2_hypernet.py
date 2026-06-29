@@ -348,6 +348,47 @@ def test_meta_train_sft_runs_and_trains_generator():
     assert all(p.grad is None for p in lm.parameters())
 
 
+def test_reconstruction_minibatch_averages_over_dataset_and_learns():
+    """Standard SGD: each step averages recon error over a minibatch of LoRAs
+    drawn from the training set, and that averaged loss drives the weights down.
+
+    Guards the fix for the 1-arbitrary-LoRA-per-step bug (loss pinned at 1.0)."""
+    from lora_lab.hypernet.meta_train import meta_train
+    from lora_lab.hypernet.model import HyperLoRAGenerator
+    torch.manual_seed(0)
+    model = _TinyModel(24, 2).eval()
+    for p in model.parameters():
+        p.requires_grad_(False)
+    specs = target_specs(model, TARGETS)
+    gen = HyperLoRAGenerator(specs, task_dim=_FakeEncoder.dim, rank=4, alpha=8,
+                             parameterization="lowrank", trunk_hidden=16)
+
+    # a tiny fixed 'database' of 3 LoRAs, each tied to a distinct description
+    pool = []
+    for desc in ("classify sentiment", "detect entailment", "do translation"):
+        target = {k: (torch.randn(4, specs[k][0]) * 0.1, torch.randn(specs[k][1], 4) * 0.1)
+                  for k in specs}
+        pool.append((desc, target))
+
+    class _CountingFixedSampler:
+        def __init__(self):
+            self.calls = 0
+        def sample(self):
+            item = pool[self.calls % len(pool)]
+            self.calls += 1
+            return item
+
+    sampler = _CountingFixedSampler()
+    losses = meta_train(gen, model, TARGETS, sampler, _FakeEncoder(),
+                        steps=40, lr=1e-2, objective="reconstruction", batch_size=3,
+                        log=lambda *_: None)
+    assert len(losses) == 40
+    # batch_size LoRAs are drawn every step (the minibatch), not one
+    assert sampler.calls == 40 * 3
+    # the averaged loss over the dataset drops well off the 1.0 no-learning floor
+    assert losses[0] > 0.9 and losses[-1] < 0.6 * losses[0]
+
+
 # ---- Sprint 3/4: real samplers (parse + leakage filter, no network) -------
 def test_parse_lora_state_dict_maps_to_base_keys():
     from lora_lab.hypernet.samplers import parse_lora_state_dict
