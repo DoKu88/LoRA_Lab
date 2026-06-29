@@ -2,8 +2,8 @@
 """Train the hypernetwork by reconstruction.
 
 Regress the generated LoRA (ΔW = scaling·B·A) onto each train-split library
-LoRA's ΔW — no base-model forward pass. Produces the checkpoint the SFT run
-warm-starts from.
+LoRA's ΔW — no base-model forward pass. Produces the checkpoint the
+generalization run warm-starts from.
 
     # smoke (random synthetic targets, tiny model)
     python scripts/train_reconstruction.py \

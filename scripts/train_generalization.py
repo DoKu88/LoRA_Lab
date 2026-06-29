@@ -1,12 +1,12 @@
 #!/usr/bin/env python
-"""Train the hypernetwork by SFT.
+"""Train the hypernetwork for generalization.
 
 Generate a LoRA from a task description, apply it to the frozen 4-bit base, run
 the task batch, and backprop the task cross-entropy THROUGH the base into the
-hypernetwork. Warm-starts from a reconstruction checkpoint if ``warmup_from`` is
-set in the config. GPU-heavy.
+hypernetwork (supervised fine-tuning through the frozen base). Warm-starts from a
+reconstruction checkpoint if ``warmup_from`` is set in the config. GPU-heavy.
 
-    python scripts/train_sft.py --config configs/phase2/sft-mistral.yaml
+    python scripts/train_generalization.py --config configs/phase2/generalization-mistral.yaml
 """
 
 from __future__ import annotations
@@ -28,8 +28,10 @@ def main() -> int:
     args = ap.parse_args()
 
     cfg = HyperConfig.load(args.config)
-    if cfg.objective != "sft":
-        raise SystemExit(f"train_sft.py expects objective=sft, got {cfg.objective!r}")
+    if cfg.objective != "generalization":
+        raise SystemExit(
+            f"train_generalization.py expects objective=generalization, got {cfg.objective!r}"
+        )
     if args.wandb:
         cfg.wandb_mode = args.wandb
 

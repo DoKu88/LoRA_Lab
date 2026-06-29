@@ -3,7 +3,7 @@
 Captures everything needed to reproduce a hypernetwork run: the frozen base +
 target LoRA shape (which must match the library adapters), the hypernetwork
 architecture (parameterization + conditioning dims), the objective
-(reconstruction vs SFT), and the data split. Each run is launched from a YAML
+(reconstruction vs generalization), and the data split. Each run is launched from a YAML
 config; ``parameterization`` is the main design knob.
 """
 
@@ -16,7 +16,7 @@ from typing import Any
 
 import yaml
 
-VALID_OBJECTIVES = ("reconstruction", "sft")
+VALID_OBJECTIVES = ("reconstruction", "generalization")
 VALID_PARAM = ("vera", "lowrank", "full")
 
 
@@ -39,7 +39,7 @@ class HyperConfig:
     trunk_hidden: int = 256
 
     # --- objective + optimization -------------------------------------------
-    objective: str = "sft"             # reconstruction | sft
+    objective: str = "generalization"  # reconstruction | generalization
     lr: float = 1e-4
     max_steps: int = 2000
     batch_size: int = 4
@@ -48,7 +48,7 @@ class HyperConfig:
     val_every: int = 100               # validate every N steps
     val_batches: int = 5               # batches averaged per validation
     seed: int = 42
-    gradient_checkpointing: bool = True   # base-backprop memory lever (SFT)
+    gradient_checkpointing: bool = True   # base-backprop memory lever (generalization mode)
     warmup_from: str | None = None        # path to a recon-warmup hypernet checkpoint
 
     # --- data (library + split) ---------------------------------------------

@@ -1,5 +1,5 @@
 """Train the Text-to-LoRA hypernetwork — the classic training loop for both
-objectives (reconstruction and SFT).
+objectives (reconstruction and generalization).
 
 The loop is the textbook five steps; the only per-objective difference (compare
 generated weights vs. run the frozen base) is wrapped in ``loss_fn`` and chosen
@@ -24,7 +24,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from ..utils.run_logger import RunLogger
 from ..utils.vram import cuda_mem_snapshot, reset_peak_memory
 from .apply import LoRARegistry, inject, remove, target_specs
-from .data import LibraryReconSampler, SFTSampler, SyntheticReconSampler
+from .data import GeneralizationSampler, LibraryReconSampler, SyntheticReconSampler
 from .model import HyperLoRAGenerator, MeanPoolEncoder, delta_w
 
 
@@ -46,7 +46,7 @@ def build_model(cfg):
     base.eval()
     for param in base.parameters():
         param.requires_grad_(False)
-    if cfg.gradient_checkpointing and cfg.objective == "sft":
+    if cfg.gradient_checkpointing and cfg.objective == "generalization":
         base.config.use_cache = False
         base.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
 
@@ -83,8 +83,9 @@ def make_loss_fn(cfg, generator, base, encoder, registry, *, device, scaling):
 
     reconstruction: generate a LoRA per description, compare ΔW to the target
                     library LoRA (no base forward) — mean over the batch.
-    sft:            generate one LoRA, apply it to the frozen base, run the task
-                    batch, and take the cross-entropy on the masked labels.
+    generalization: generate one LoRA, apply it to the frozen base, run the task
+                    batch, and take the cross-entropy on the masked labels
+                    (supervised fine-tuning through the frozen base).
     """
     if cfg.objective == "reconstruction":
         def loss_fn(descriptions, targets):
@@ -95,7 +96,7 @@ def make_loss_fn(cfg, generator, base, encoder, registry, *, device, scaling):
                 target = {key: (a.to(device), b.to(device)) for key, (a, b) in target.items()}
                 total = total + reconstruction_error(adapter, target, scaling=scaling)
             return total / len(targets)
-    else:  # sft
+    else:  # generalization
         def loss_fn(descriptions, batch):
             embedding = encoder.encode(descriptions).to(device).squeeze(0)
             registry.set_adapter(generator(embedding))          # apply the generated LoRA
@@ -121,8 +122,8 @@ def _load_samples(cfg, tokenizer, specs, *, split, synthetic):
         return SyntheticReconSampler(specs, rank=cfg.rank, seed=cfg.seed)
     if cfg.objective == "reconstruction":
         return LibraryReconSampler(cfg.split_path, cfg.library_path, split=split, seed=cfg.seed)
-    return SFTSampler(cfg.split_path, cfg.library_path, tokenizer,
-                      split=split, max_seq_len=cfg.max_seq_len, seed=cfg.seed)
+    return GeneralizationSampler(cfg.split_path, cfg.library_path, tokenizer,
+                                 split=split, max_seq_len=cfg.max_seq_len, seed=cfg.seed)
 
 
 def _build_logger(cfg, stage):
@@ -153,10 +154,10 @@ def train(cfg, *, steps=None, synthetic=False, stage=None):
     optimizer = torch.optim.Adam(generator.parameters(), lr=cfg.lr)
     logger = _build_logger(cfg, stage or cfg.objective)
 
-    # SFT applies the generated LoRA to the frozen base via these hooks; the
-    # reconstruction objective compares weights directly and needs no injection.
+    # Generalization applies the generated LoRA to the frozen base via these hooks;
+    # the reconstruction objective compares weights directly and needs no injection.
     registry = LoRARegistry()
-    handles = inject(base, cfg.target_modules, registry, scaling=scaling) if cfg.objective == "sft" else []
+    handles = inject(base, cfg.target_modules, registry, scaling=scaling) if cfg.objective == "generalization" else []
     loss_fn = make_loss_fn(cfg, generator, base, encoder, registry, device=device, scaling=scaling)
 
     n_steps = steps or cfg.max_steps

@@ -1,6 +1,6 @@
 # Reconstruction warmup — relative Frobenius error on ΔW vs train-split library LoRAs.
 # Cheap: NO base forward pass — just regress generated ΔW onto each train task's
-# library adapter. Produces the init checkpoint the SFT run warm-starts from.
+# library adapter. Produces the init checkpoint the generalization run warm-starts from.
 # Train-split only (never touches held-out targets).
 base_model: mistralai/Mistral-7B-Instruct-v0.2
 target_modules: [q_proj, k_proj, v_proj]

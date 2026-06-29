@@ -1,7 +1,7 @@
 """Samplers — feed the training loop a batch of (description, ground-truth).
 
 LibraryReconSampler   reconstruction: (descriptions, [target LoRA adapters])
-SFTSampler            SFT: (description, tokenized+prompt-masked example batch)
+GeneralizationSampler generalization: (description, tokenized+prompt-masked example batch)
 SyntheticReconSampler random targets for a CPU smoke (no downloads)
 
 Each exposes ``batch(n)`` returning ``(descriptions, targets)`` for one step.
@@ -90,8 +90,8 @@ class LibraryReconSampler:
         return len(self.tasks)
 
 
-class SFTSampler:
-    """SFT batches: a task's examples, chat-templated + prompt-masked."""
+class GeneralizationSampler:
+    """Generalization batches: a task's examples, chat-templated + prompt-masked."""
 
     def __init__(self, split_path: str | Path, library_path: str | Path, tokenizer,
                  *, split: str = "train", max_seq_len: int = 512, seed: int = 0):

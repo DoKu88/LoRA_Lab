@@ -120,7 +120,7 @@ def build_supervised(
     output_text: str,
     max_seq_len: int,
 ) -> dict[str, list[int]] | None:
-    """Build one prompt-masked SFT example.
+    """Build one prompt-masked supervised example.
 
     Returns ``{input_ids, attention_mask, labels}`` with prompt tokens set to
     ``IGNORE_INDEX`` in ``labels``. Returns ``None`` for degenerate examples
