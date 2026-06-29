@@ -1,6 +1,6 @@
-"""SNI data pipeline."""
+"""Task-dataset pipeline."""
 
-from .sni import (
+from .task_dataset import (
     DataCollatorForSupervised,
     DatasetBundle,
     TaskSpec,

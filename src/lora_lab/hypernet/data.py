@@ -1,7 +1,7 @@
 """Samplers — feed the training loop a batch of (description, ground-truth).
 
-LibraryReconSampler  reconstruction: (descriptions, [target LoRA adapters])
-SNISFTSampler        SFT: (description, tokenized+prompt-masked example batch)
+LibraryReconSampler   reconstruction: (descriptions, [target LoRA adapters])
+SFTSampler            SFT: (description, tokenized+prompt-masked example batch)
 SyntheticReconSampler random targets for a CPU smoke (no downloads)
 
 Each exposes ``batch(n)`` returning ``(descriptions, targets)`` for one step.
@@ -19,7 +19,7 @@ import yaml
 from huggingface_hub import hf_hub_download
 from safetensors.torch import load_file
 
-from ..data.sni import DataCollatorForSupervised, TaskSpec, get_dataset
+from ..data.task_dataset import DataCollatorForSupervised, TaskSpec, get_dataset
 
 # PEFT saves LoRA factors as
 #   base_model.model.<module path>.lora_A.weight   shape (r, in)
@@ -90,8 +90,8 @@ class LibraryReconSampler:
         return len(self.tasks)
 
 
-class SNISFTSampler:
-    """SFT batches: a task's SNI examples, chat-templated + prompt-masked."""
+class SFTSampler:
+    """SFT batches: a task's examples, chat-templated + prompt-masked."""
 
     def __init__(self, split_path: str | Path, library_path: str | Path, tokenizer,
                  *, split: str = "train", max_seq_len: int = 512, seed: int = 0):

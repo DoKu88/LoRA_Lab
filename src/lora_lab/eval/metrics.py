@@ -1,6 +1,6 @@
-"""SNI eval metrics: exact-match and ROUGE-L.
+"""Eval metrics: exact-match and ROUGE-L.
 
-Both score a prediction against a *list* of acceptable references (SNI outputs
+Both score a prediction against a *list* of acceptable references (task outputs
 are multi-reference) by taking the max, then average over examples. This
 matches the Super-Natural-Instructions convention (EM for classification,
 ROUGE-L for free-form generation).

@@ -1,6 +1,6 @@
-"""Deterministic, versioned SNI data loaders.
+"""Deterministic, versioned task-dataset loaders.
 
-Pulls per-task datasets from the public ``Lots-of-LoRAs`` repos (SNI subset),
+Pulls per-task instruction datasets from the public ``Lots-of-LoRAs`` repos,
 formats each example with the base model's chat template when it has one
 (instruct models) and a plain fallback otherwise (base models like
 SmolLM2-135M), tokenizes with prompt-masking for supervised fine-tuning, and
@@ -66,7 +66,7 @@ def split_hash(ids: list[str]) -> str:
 # Prompt / supervised-example construction
 # ---------------------------------------------------------------------------
 def _first(output: Any) -> str:
-    """SNI ``output`` is a list of acceptable answers; training uses the 1st."""
+    """``output`` is a list of acceptable answers; training uses the 1st."""
     if isinstance(output, (list, tuple)):
         return str(output[0]) if output else ""
     return str(output)
@@ -138,7 +138,7 @@ def build_supervised(
         completion_ids = completion_ids + [eos]
 
     # Reserve at least 1 completion token; truncate the *prompt* from the left
-    # (keep the instance, which sits at the end of an SNI input) if needed.
+    # (keep the instance, which sits at the end of the input) if needed.
     max_prompt = max_seq_len - len(completion_ids)
     if max_prompt <= 0:
         # Completion alone overflows; keep a minimal tail of the completion.
@@ -247,7 +247,7 @@ def get_dataset(
     seed: int = 42,
     manifest: str | Path = _DEFAULT_MANIFEST,
 ) -> DatasetBundle:
-    """Return tokenized train/val and an eval view for one SNI task.
+    """Return tokenized train/val and an eval view for one task.
 
     Splits are taken from the source repo (train/valid/test); subsampling is
     seeded and the resulting ordered ids are hashed into ``bundle.hashes`` for

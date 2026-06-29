@@ -24,7 +24,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from ..utils.run_logger import RunLogger
 from ..utils.vram import cuda_mem_snapshot, reset_peak_memory
 from .apply import LoRARegistry, inject, remove, target_specs
-from .data import LibraryReconSampler, SNISFTSampler, SyntheticReconSampler
+from .data import LibraryReconSampler, SFTSampler, SyntheticReconSampler
 from .model import HyperLoRAGenerator, MeanPoolEncoder, delta_w
 
 
@@ -121,8 +121,8 @@ def _load_samples(cfg, tokenizer, specs, *, split, synthetic):
         return SyntheticReconSampler(specs, rank=cfg.rank, seed=cfg.seed)
     if cfg.objective == "reconstruction":
         return LibraryReconSampler(cfg.split_path, cfg.library_path, split=split, seed=cfg.seed)
-    return SNISFTSampler(cfg.split_path, cfg.library_path, tokenizer,
-                         split=split, max_seq_len=cfg.max_seq_len, seed=cfg.seed)
+    return SFTSampler(cfg.split_path, cfg.library_path, tokenizer,
+                      split=split, max_seq_len=cfg.max_seq_len, seed=cfg.seed)
 
 
 def _build_logger(cfg, stage):

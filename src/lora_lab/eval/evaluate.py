@@ -8,14 +8,14 @@ import torch
 from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from ..data.sni import get_dataset
+from ..data.task_dataset import get_dataset
 from .metrics import score_predictions
 
 
 def _clean_generation(text: str) -> str:
     """Take the first non-empty line of a generation.
 
-    SNI gold outputs are a single label (classification) or a single line
+    Gold outputs are a single label (classification) or a single line
     (generation), but models often emit the answer then keep going
     ("positive\\n\\nNegative Example ..."). Scoring the first non-empty line
     matches the task convention without rewarding the run-on.
