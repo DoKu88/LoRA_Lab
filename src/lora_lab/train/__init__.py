@@ -1,6 +1,5 @@
-"""Run harness: logging, parameter accounting, and the trainer."""
+"""Run harness: local-first + W&B logging for meta-training runs."""
 
-from .params import count_parameters
 from .run_logger import RunLogger
 
-__all__ = ["RunLogger", "count_parameters"]
+__all__ = ["RunLogger"]

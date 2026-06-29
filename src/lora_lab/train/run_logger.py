@@ -19,11 +19,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from ..config import RunConfig
-
 
 class RunLogger:
-    def __init__(self, config: RunConfig, output_dir: str | Path | None = None):
+    def __init__(self, config, output_dir: str | Path | None = None):
         self.config = config
         self.output_dir = Path(output_dir) if output_dir else config.output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)

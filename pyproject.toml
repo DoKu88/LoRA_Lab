@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "lora_lab"
 version = "0.0.1"
-description = "Phase 0 harness: full-FT vs LoRA vs QLoRA on a single RTX 5090."
+description = "Text-to-LoRA hypernetwork: reconstruction + SFT training/eval."
 requires-python = ">=3.11"
 # Runtime deps are pinned in requirements.txt / environment.yml (the torch
 # family needs the cu128 wheel index, which pyproject can't express cleanly).
