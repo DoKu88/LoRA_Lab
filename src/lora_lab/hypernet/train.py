@@ -25,7 +25,7 @@ from ..utils.run_logger import RunLogger
 from ..utils.vram import cuda_mem_snapshot, reset_peak_memory
 from .apply import LoRARegistry, inject, remove, target_specs
 from .data import GeneralizationSampler, LibraryReconSampler, SyntheticReconSampler
-from .model import HyperLoRAGenerator, MeanPoolEncoder, delta_w
+from .model import HyperLoRAGenerator, MeanPoolEncoder
 
 
 def build_model(cfg):
@@ -66,24 +66,32 @@ def build_model(cfg):
     return base, tokenizer, encoder, generator, specs
 
 
-def reconstruction_error(adapter, target, *, scaling, eps=1e-6):
-    """Mean relative Frobenius error ‖ΔW_gen − ΔW_tgt‖/‖ΔW_tgt‖ over shared keys.
+def reconstruction_error(adapter, target, *, eps=1e-6):
+    """Mean relative Frobenius error ‖ΔW_gen − ΔW_tgt‖_F / ‖ΔW_tgt‖_F over shared keys.
 
-    Relative (not absolute) so a target LoRA's tiny per-element values don't
-    vanish the gradient; 1.0 when the generated ΔW is 0 (the no-learning floor).
+    ΔW = scaling·(B·A); the scaling cancels in the ratio. Computed from r×r Gram
+    matrices (BᵀB, AAᵀ) so the full (out×in) ΔW is never materialized — forming it
+    for all 96 Mistral targets × the batch OOMs a 32 GB GPU. Relative (not
+    absolute) so a target LoRA's tiny per-element values don't vanish the gradient;
+    1.0 when the generated ΔW is 0 (the no-learning floor).
     """
     keys = [key for key in adapter if key in target]
     if not keys:
         raise ValueError("no shared target keys between generated and target adapters")
     total = adapter[keys[0]][0].new_zeros(())
     for key in keys:
-        delta_gen = delta_w(*adapter[key], scaling)
-        delta_tgt = delta_w(*target[key], scaling)
-        total = total + (delta_gen - delta_tgt).norm() / (delta_tgt.norm() + eps)
+        a_g, b_g = adapter[key]                       # A:(r,in)  B:(out,r)
+        a_t, b_t = target[key]
+        # ‖B·A‖_F² = tr((BᵀB)(A Aᵀ));  ⟨B_gA_g, B_tA_t⟩ = tr((B_gᵀB_t)(A_g A_tᵀ))
+        gen_sq = ((b_g.t() @ b_g) * (a_g @ a_g.t())).sum()
+        tgt_sq = ((b_t.t() @ b_t) * (a_t @ a_t.t())).sum()
+        cross = ((b_g.t() @ b_t) * (a_g @ a_t.t())).sum()
+        diff = (gen_sq - 2 * cross + tgt_sq).clamp(min=0).sqrt()
+        total = total + diff / (tgt_sq.sqrt() + eps)
     return total / len(keys)
 
 
-def make_loss_fn(cfg, generator, base, encoder, registry, *, device, scaling):
+def make_loss_fn(cfg, generator, base, encoder, registry, *, device):
     """Return ``loss_fn(descriptions, targets)`` for the configured objective.
 
     reconstruction: generate a LoRA per description, compare ΔW to the target
@@ -99,7 +107,7 @@ def make_loss_fn(cfg, generator, base, encoder, registry, *, device, scaling):
             for index, target in enumerate(targets):
                 adapter = generator(embeddings[index])
                 target = {key: (a.to(device), b.to(device)) for key, (a, b) in target.items()}
-                total = total + reconstruction_error(adapter, target, scaling=scaling)
+                total = total + reconstruction_error(adapter, target)
             return total / len(targets)
     else:  # generalization
         def loss_fn(descriptions, batch):
@@ -177,7 +185,7 @@ def train(cfg, *, steps=None, synthetic=False, stage=None):
     # the reconstruction objective compares weights directly and needs no injection.
     registry = LoRARegistry()
     handles = inject(base, cfg.target_modules, registry, scaling=scaling) if cfg.objective == "generalization" else []
-    loss_fn = make_loss_fn(cfg, generator, base, encoder, registry, device=device, scaling=scaling)
+    loss_fn = make_loss_fn(cfg, generator, base, encoder, registry, device=device)
 
     n_steps = cfg.max_steps
     if device == "cuda":
