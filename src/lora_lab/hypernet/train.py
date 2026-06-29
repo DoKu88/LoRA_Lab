@@ -55,9 +55,14 @@ def build_model(cfg):
     generator = HyperLoRAGenerator(specs, task_dim=encoder.dim, rank=cfg.rank, alpha=cfg.alpha,
                                    parameterization=cfg.parameterization, layer_dim=cfg.layer_dim,
                                    module_dim=cfg.module_dim, trunk_hidden=cfg.trunk_hidden).to(cfg.device)
-    if cfg.warmup_from and Path(cfg.warmup_from).exists():
-        generator.load_state_dict(torch.load(cfg.warmup_from, map_location=cfg.device))
-        print(f"[train] warm-started from {cfg.warmup_from}")
+    if cfg.warmup_from:
+        path = Path(cfg.warmup_from)
+        if path.is_dir():  # resolve a run directory to its most recent checkpoint
+            checkpoints = sorted(path.glob("*.pt"), key=lambda p: p.stat().st_mtime)
+            path = checkpoints[-1] if checkpoints else None
+        if path and path.exists():
+            generator.load_state_dict(torch.load(path, map_location=cfg.device))
+            print(f"[train] warm-started from {path}")
     return base, tokenizer, encoder, generator, specs
 
 
@@ -154,11 +159,16 @@ def _build_logger(cfg, stage):
 
 def train(cfg, *, steps=None, synthetic=False, stage=None):
     """Train the hypernetwork for ``cfg.objective`` and save the checkpoint."""
+    # Fold CLI overrides into the config so the saved config.yaml reflects what ran.
+    if steps is not None:
+        cfg.max_steps = steps
+    cfg.synthetic = synthetic
+
     base, tokenizer, encoder, generator, specs = build_model(cfg)
     device, scaling = cfg.device, generator.scaling
 
-    train_data = _load_samples(cfg, tokenizer, specs, split="train", synthetic=synthetic)
-    val_data = _load_val_samples(cfg, tokenizer, specs, synthetic=synthetic)
+    train_data = _load_samples(cfg, tokenizer, specs, split="train", synthetic=cfg.synthetic)
+    val_data = _load_val_samples(cfg, tokenizer, specs, synthetic=cfg.synthetic)
 
     optimizer = torch.optim.Adam(generator.parameters(), lr=cfg.lr)
     logger = _build_logger(cfg, stage or cfg.objective)
@@ -169,7 +179,7 @@ def train(cfg, *, steps=None, synthetic=False, stage=None):
     handles = inject(base, cfg.target_modules, registry, scaling=scaling) if cfg.objective == "generalization" else []
     loss_fn = make_loss_fn(cfg, generator, base, encoder, registry, device=device, scaling=scaling)
 
-    n_steps = steps or cfg.max_steps
+    n_steps = cfg.max_steps
     if device == "cuda":
         reset_peak_memory()
     print(f"[train] {cfg.name}: {n_steps} steps, objective={cfg.objective}, "
@@ -211,14 +221,16 @@ def train(cfg, *, steps=None, synthetic=False, stage=None):
 
 
 def _save_and_summarize(cfg, generator, specs, logger, losses, device):
-    out_dir = logger.output_dir
-    torch.save(generator.state_dict(), out_dir / "hypernet.pt")
+    # name the checkpoint after the run (matches the W&B run name)
+    ckpt_path = logger.output_dir / f"{logger.run_name}.pt"
+    torch.save(generator.state_dict(), ckpt_path)
     peak_vram_gb = (torch.cuda.max_memory_allocated() / 1e9) if device == "cuda" else 0.0
-    logger.set_summary(name=cfg.name, objective=cfg.objective, parameterization=cfg.parameterization,
-                       steps=len(losses), hypernet_params=generator.num_params(), n_targets=len(specs),
+    logger.set_summary(name=cfg.name, run_name=logger.run_name, objective=cfg.objective,
+                       parameterization=cfg.parameterization, steps=len(losses),
+                       hypernet_params=generator.num_params(), n_targets=len(specs),
                        loss_first=round(losses[0], 6), loss_last=round(losses[-1], 6),
                        peak_vram_gb=round(peak_vram_gb, 4))
-    logger.log_artifact_path(out_dir / "hypernet.pt", "hypernet_checkpoint")
+    logger.log_artifact_path(ckpt_path, "hypernet_checkpoint")
     logger.finish()
-    print(f"[train] done: loss {losses[0]:.4f} -> {losses[-1]:.4f}; saved {out_dir}/hypernet.pt")
+    print(f"[train] done: loss {losses[0]:.4f} -> {losses[-1]:.4f}; saved {ckpt_path}")
     return dict(logger.summary)

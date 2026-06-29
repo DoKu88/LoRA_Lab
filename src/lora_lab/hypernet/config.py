@@ -48,6 +48,7 @@ class HyperConfig:
     val_every: int = 100               # validate every N steps
     val_batches: int = 5               # batches averaged per validation
     seed: int = 42
+    synthetic: bool = False            # random synthetic targets instead of the library (smoke)
     gradient_checkpointing: bool = True   # base-backprop memory lever (generalization mode)
     warmup_from: str | None = None        # path to a recon-warmup hypernet checkpoint
 

@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import petname
 import wandb
 
 
@@ -26,6 +27,9 @@ class RunLogger:
         self.config = config
         self.output_dir = Path(output_dir) if output_dir else config.output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        # One descriptive run name, shared by the W&B run and the saved checkpoint.
+        self.run_name = self._make_run_name()
 
         self.metrics_path = self.output_dir / "metrics.jsonl"
         self._metrics_fh = self.metrics_path.open("w")
@@ -39,21 +43,22 @@ class RunLogger:
         self._init_wandb()
 
     # ---- W&B (best-effort) --------------------------------------------
-    def _wandb_run_name(self) -> str:
-        """W&B display name: ``MM_DD_YYYY_HR_MM_SEC_<model>_<task>``.
+    def _make_run_name(self) -> str:
+        """Descriptive run name shared by W&B and the checkpoint file:
+        ``MM_DD_YYYY_HR_MM_SEC_<petname>_<model>_<objective>``.
 
-        Timestamp-prefixed so re-runs of the same cell are distinct runs in the
-        W&B UI (the local results/runs/ dir stays ``{method}-{model}-{task}``).
-        Method is preserved as the W&B ``group`` rather than in the name.
+        The timestamp + petname keep re-runs distinct; the objective is last, so
+        names end in ``reconstruction`` / ``generalization``. The run's W&B
+        *group* is the stage, not part of the name.
         """
         ts = datetime.now().strftime("%m_%d_%Y_%H_%M_%S")
-        return f"{ts}_{self.config.model_slug}_{self.config.task}"
+        return f"{ts}_{petname.generate(words=2, separator='-')}_{self.config.model_slug}_{self.config.task}"
 
     def _init_wandb(self) -> None:
         if self._wandb_mode == "disabled":
             print("[wandb] disabled")
             return
-        wb_name = self._wandb_run_name()
+        wb_name = self.run_name
         try:
             # offline never needs creds; online falls back to offline on error.
             run = wandb.init(

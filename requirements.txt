@@ -29,6 +29,7 @@ matplotlib>=3.9        # gpu-mem-vs-iteration plot
 tabulate>=0.9          # markdown table render (df.to_markdown)
 psutil>=5.9            # host-RAM (RSS) probe — Phase 0.5 peak-RAM measurement
 tqdm>=4.66             # meta-train progress bar (also a transformers transitive dep)
+petname>=2.6           # human-friendly run-name suffix (adjective-noun)
 pyyaml>=6.0            # config + tasks manifest
 rouge-score>=0.1.2     # ROUGE-L eval metric
 
