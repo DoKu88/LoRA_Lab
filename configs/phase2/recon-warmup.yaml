@@ -14,7 +14,7 @@ module_dim: 8
 trunk_hidden: 256
 objective: reconstruction
 lr: 1.0e-3
-max_steps: 3000
+max_steps: 1500
 batch_size: 64       # tasks (LoRAs) sampled per step
 grad_accum: 1
 max_seq_len: 512
