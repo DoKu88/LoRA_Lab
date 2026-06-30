@@ -7,8 +7,9 @@
 # Which tasks to evaluate. Either an explicit list of task ids (keys in
 # configs/phase1/library.yaml), or `split:` to use every task in a split.
 tasks:
+  - task1286     # OpenBookQA multiple-choice QA (English; answer "A"/"B"/"C"/"D") -- easy to read
+  - task512      # twitter emotion classification (English)
   - task1009     # Bengali -> Hindi translation
-  - task512      # twitter emotion classification
 # split: val     # alternative: all tasks in this split (overridden by `tasks` if both set)
 
 n_examples: 3                  # examples drawn from each task's held-out set
