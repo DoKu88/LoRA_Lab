@@ -43,6 +43,9 @@ class _LoRAWrapper(nn.Module):
         factors = self.registry.get(self.key)
         if factors is not None:
             lora_a, lora_b = factors  # lora_a:(rank,in)  lora_b:(out,rank)
+            # match the base's compute dtype: a 4-bit base runs bf16 while the
+            # generated/oracle factors are fp32 (grads still accumulate in fp32).
+            lora_a, lora_b = lora_a.to(inputs.dtype), lora_b.to(inputs.dtype)
             # inputs:(...,in) -> (...,rank) via Aᵀ -> (...,out) via Bᵀ
             output = output + self.scaling * F.linear(F.linear(inputs, lora_a), lora_b)
         return output
