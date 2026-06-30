@@ -133,6 +133,37 @@ def validate(loss_fn, generator, val_data, *, batch_size, n_batches) -> float:
     return total / n_batches
 
 
+@torch.no_grad()
+def probe_diversity(generator, encoder, descriptions, *, scaling, device) -> dict:
+    """Generation-diversity diagnostics over a fixed probe of distinct tasks.
+
+    Separates the reconstruction failure modes by comparing the ΔW the generator
+    produces for *different* task descriptions:
+      gen/dW_mag    mean |ΔW| over all targets — is it leaving zero at all?
+      gen/task_std  mean per-element std *across tasks* — does it vary per task?
+      gen/diversity task_std / dW_mag (scale-free) — ~0 => same adapter every task.
+
+    Memory stays bounded by forming each target's K ΔW one key at a time.
+    """
+    was_training = generator.training
+    generator.eval()
+    embeddings = encoder.encode(descriptions).to(device)            # (K, dim)
+    adapters = [generator(embeddings[i]) for i in range(len(descriptions))]
+    sum_std = sum_mag = 0.0
+    n_elements = 0
+    for key in adapters[0]:
+        dws = torch.stack([delta_w(*adapter[key], scaling) for adapter in adapters])  # (K, out, in)
+        sum_std += float(dws.std(dim=0, unbiased=False).sum())
+        sum_mag += float(dws.abs().mean(dim=0).sum())
+        n_elements += dws[0].numel()
+    if was_training:
+        generator.train()
+    dw_mag = sum_mag / n_elements
+    task_std = sum_std / n_elements
+    return {"gen/dW_mag": round(dw_mag, 8), "gen/task_std": round(task_std, 8),
+            "gen/diversity": round(task_std / (dw_mag + 1e-12), 6)}
+
+
 def _load_samples(cfg, tokenizer, specs, *, split, synthetic):
     if synthetic:
         return SyntheticReconSampler(specs, rank=cfg.rank, seed=cfg.seed)
@@ -181,6 +212,13 @@ def train(cfg, *, steps=None, synthetic=False, stage=None):
     train_data = _load_samples(cfg, tokenizer, specs, split="train", synthetic=cfg.synthetic)
     val_data = _load_val_samples(cfg, tokenizer, specs, synthetic=cfg.synthetic)
 
+    # Fixed probe of distinct tasks for generation-diversity diagnostics (recon only).
+    probe_descs = None
+    if getattr(cfg, "probe_every", 0) and cfg.objective == "reconstruction" and not cfg.synthetic:
+        n_probe = min(cfg.probe_n, len(train_data))
+        probe_descs = [train_data.library[t]["description"] for t in train_data.tasks[:n_probe]]
+        print(f"[train] diversity probe: {n_probe} tasks every {cfg.probe_every} steps")
+
     optimizer = torch.optim.Adam(generator.parameters(), lr=cfg.lr)
     logger = _build_logger(cfg, stage or cfg.objective)
 
@@ -220,6 +258,9 @@ def train(cfg, *, steps=None, synthetic=False, stage=None):
                 metrics["val/loss"] = round(
                     validate(loss_fn, generator, val_data,
                              batch_size=cfg.batch_size, n_batches=cfg.val_batches), 6)
+            if probe_descs is not None and (step + 1) % cfg.probe_every == 0:
+                metrics.update(probe_diversity(generator, encoder, probe_descs,
+                                               scaling=scaling, device=device))
             if device == "cuda":
                 metrics["gpu_mem_gb"] = round(cuda_mem_snapshot()["allocated_gb"], 4)
             logger.log_metrics(step, metrics)

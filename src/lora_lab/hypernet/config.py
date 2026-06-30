@@ -47,6 +47,8 @@ class HyperConfig:
     max_seq_len: int = 512
     val_every: int = 100               # validate every N steps
     val_batches: int = 5               # batches averaged per validation
+    probe_every: int = 0               # log generation-diversity diagnostics every N steps (0=off)
+    probe_n: int = 5                   # distinct tasks probed for diversity (reconstruction only)
     seed: int = 42
     synthetic: bool = False            # random synthetic targets instead of the library (smoke)
     gradient_checkpointing: bool = True   # base-backprop memory lever (generalization mode)
