@@ -1,0 +1,17 @@
+# Test spec for scripts/eval_hypernet.py (batch mode).
+# Pair with a training run's config.yaml:
+#   python scripts/eval_hypernet.py \
+#       --config results/phase2/runs/<run>/config.yaml \
+#       --tests configs/phase2/eval-tests.yaml
+
+# Which tasks to evaluate. Either an explicit list of task ids (keys in
+# configs/phase1/library.yaml), or `split:` to use every task in a split.
+tasks:
+  - task1009     # Bengali -> Hindi translation
+  - task512      # twitter emotion classification
+# split: val     # alternative: all tasks in this split (overridden by `tasks` if both set)
+
+n_examples: 3                  # examples drawn from each task's held-out set
+max_new_tokens: 32
+models: [base, oracle, generated]   # which to run/score (oracle skipped if absent)
+show_samples: true             # print one input + each model's output per task
