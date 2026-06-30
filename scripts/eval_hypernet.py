@@ -66,9 +66,9 @@ def block(label: str, text: str, color: str) -> None:
 # ---- the evaluator --------------------------------------------------------
 class HypernetEvaluator:
     def __init__(self, config_path: str, checkpoint_path: str | None):
-        self.cfg = HyperConfig.load(config_path)
+        cfg_path, self.ckpt = _resolve_paths(config_path, checkpoint_path)
+        self.cfg = HyperConfig.load(cfg_path)
         self.device = self.cfg.device
-        self.ckpt = _resolve_checkpoint(config_path, checkpoint_path)
         self.library = _load_library(self.cfg.library_path)
 
         print(f"{DIM}loading base {self.cfg.base_model} (4bit={self.cfg.load_in_4bit}) ...{RESET}")
@@ -141,14 +141,30 @@ class HypernetEvaluator:
         return self.tok.decode(out[0][ids.shape[1]:], skip_special_tokens=True).strip()
 
 
-def _resolve_checkpoint(config_path: str, explicit: str | None) -> Path:
-    if explicit:
-        return Path(explicit)
-    run_dir = Path(config_path).parent
+def _latest_pt(run_dir: Path) -> Path | None:
     pts = sorted(run_dir.glob("*.pt"), key=lambda p: p.stat().st_mtime)
-    if not pts:
-        raise SystemExit(f"no *.pt checkpoint found next to {config_path}")
-    return pts[-1]
+    return pts[-1] if pts else None
+
+
+def _resolve_paths(config_arg: str, checkpoint_arg: str | None) -> tuple[Path, Path]:
+    """Accept --config as a run dir, a config.yaml, or a checkpoint .pt.
+
+    Returns (config.yaml, checkpoint). The config.yaml is read from the run
+    directory; the checkpoint is --checkpoint, or a .pt passed as --config, else
+    the newest *.pt in that directory.
+    """
+    p = Path(config_arg)
+    if p.is_dir():
+        cfg, ckpt = p / "config.yaml", (Path(checkpoint_arg) if checkpoint_arg else _latest_pt(p))
+    elif p.suffix == ".pt":
+        ckpt, cfg = (Path(checkpoint_arg) if checkpoint_arg else p), p.parent / "config.yaml"
+    else:  # a config.yaml
+        cfg, ckpt = p, (Path(checkpoint_arg) if checkpoint_arg else _latest_pt(p.parent))
+    if not cfg.exists():
+        raise SystemExit(f"config.yaml not found at {cfg}")
+    if not ckpt or not Path(ckpt).exists():
+        raise SystemExit(f"no checkpoint (.pt) found for --config {config_arg}")
+    return cfg, Path(ckpt)
 
 
 # ---- interactive mode -----------------------------------------------------
@@ -276,8 +292,9 @@ def batch(ev: HypernetEvaluator, tests: dict, default_max_new_tokens: int) -> No
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--config", required=True, help="a training run's config.yaml")
-    ap.add_argument("--checkpoint", default=None, help="hypernet .pt (default: newest next to --config)")
+    ap.add_argument("--config", required=True,
+                    help="a run's config.yaml, its run directory, or a checkpoint .pt")
+    ap.add_argument("--checkpoint", default=None, help="hypernet .pt (default: newest in the run dir)")
     ap.add_argument("--tests", default=None, help="YAML test spec -> batch mode")
     ap.add_argument("--interactive", action="store_true", help="interactive prompt loop")
     ap.add_argument("--task", default=None, help="preselect a task (interactive)")
