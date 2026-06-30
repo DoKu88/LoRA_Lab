@@ -65,17 +65,23 @@ def normalize_embeddings(embeddings: torch.Tensor) -> torch.Tensor:
 # ---------------------------------------------------------------------------
 # Output heads: conditioning vector -> LoRA (A, B). Smallest-output first.
 # Committed default is LowRankABHead (the smallest that can reconstruct a target
-# ΔW). All heads zero-init the B path so ΔW = 0 at start (the no-op invariant).
+# ΔW). LowRank/VeRA zero-init the B path so ΔW = 0 at start (the no-op invariant);
+# FullABHead uses a small NON-ZERO B init (reconstruction-overfit experiment).
 # ---------------------------------------------------------------------------
 class FullABHead(nn.Module):
     """Dense: conditioning -> A (rank·in) and B (out·rank). Largest output."""
 
-    def __init__(self, cond_dim: int, in_features: int, out_features: int, rank: int):
+    def __init__(self, cond_dim: int, in_features: int, out_features: int, rank: int,
+                 b_init_std: float = 1e-4):
         super().__init__()
         self.in_features, self.out_features, self.rank = in_features, out_features, rank
         self.a_head = nn.Linear(cond_dim, rank * in_features)
         self.b_head = nn.Linear(cond_dim, out_features * rank)
-        nn.init.zeros_(self.b_head.weight)
+        # Small NON-ZERO B init (was hard zeros): breaks the ΔW=0 degeneracy so the
+        # A path gets gradient at step 0 instead of being dead until B grows. Trades
+        # away the no-op-at-init property — fine for reconstruction, where the
+        # untrained adapter is never applied to the base model. Tune via b_init_std.
+        nn.init.normal_(self.b_head.weight, std=b_init_std)
         nn.init.zeros_(self.b_head.bias)
 
     def forward(self, conditioning: torch.Tensor):
