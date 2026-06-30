@@ -1,0 +1,17 @@
+# Overfit sanity split — 5 distinct classification tasks (distinct datasets,
+# distinct label spaces, distinct descriptions). Used by configs/phase2/recon-overfit.yaml
+# to test whether the hypernet can drive reconstruction L1 -> ~0 on a tiny set.
+# val mirrors train, so val/loss should hug train/loss.
+seed: 42
+train:
+  task284:  task284_imdb_classification              # binary sentiment
+  task379:  task379_agnews_topic_classification      # 4-way topic
+  task616:  task616_cola_classification              # grammatical acceptability
+  task1344: task1344_glue_entailment_classification  # entailment
+  task1502: task1502_hatexplain_classification       # hate/offensive/normal
+val:
+  task284:  task284_imdb_classification
+  task379:  task379_agnews_topic_classification
+  task616:  task616_cola_classification
+  task1344: task1344_glue_entailment_classification
+  task1502: task1502_hatexplain_classification

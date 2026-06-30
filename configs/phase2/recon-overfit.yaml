@@ -1,0 +1,30 @@
+# Reconstruction OVERFIT sanity test — mean-L1 on ΔW vs a tiny 5-task split.
+# Cheap: NO base forward pass — just regress generated ΔW onto each task's library
+# adapter. Goal: drive train/loss -> ~0 to confirm the pipeline can memorize.
+# rank MUST match the r16 library adapters, or a rank-deficient ΔW floors the loss.
+base_model: mistralai/Mistral-7B-Instruct-v0.2
+target_modules: [q_proj, v_proj]   # only q,v keys are compared; k slices ignored
+load_in_4bit: true
+rank: 16             # match the r16 library adapters so loss can reach ~0
+alpha: 32
+parameterization: full
+encoder_model: thenlper/gte-large
+layer_dim: 16
+module_dim: 8
+trunk_hidden: 256
+objective: reconstruction
+lr: 1.0e-3
+max_steps: 1000
+batch_size: 16       # 5 tasks sampled with replacement; 16 covers them each step
+grad_accum: 1
+max_seq_len: 512
+seed: 42
+gradient_checkpointing: false   # no base forward in reconstruction
+warmup_from: null
+library_path: configs/phase1/library.yaml
+split_path: configs/phase2/overfit_split.yaml
+device: cuda
+output_root: results/phase2/runs
+run_name: recon-overfit
+wandb_project: lora-lab-phase2
+wandb_mode: online
