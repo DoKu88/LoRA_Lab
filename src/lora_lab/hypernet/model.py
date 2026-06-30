@@ -37,10 +37,10 @@ class MeanPoolEncoder:
                  device: str = "cpu", max_len: int = 128):
         self.device = device
         self.max_len = max_len
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
         if self.tokenizer.pad_token is None:  # decoder-only encoders (e.g. SmolLM2) lack one
             self.tokenizer.pad_token = self.tokenizer.eos_token
-        self.model = AutoModel.from_pretrained(model_name).to(device).eval()
+        self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True).to(device).eval()
         for param in self.model.parameters():
             param.requires_grad_(False)
         self.dim = int(self.model.config.hidden_size)
