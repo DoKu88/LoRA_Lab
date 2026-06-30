@@ -73,6 +73,22 @@ def labeled(label: str, text: str, color: str, lw: int = 10) -> None:
         print(f"  {'':<{lw}} {line}")
 
 
+def legend(include_gold: bool = True) -> None:
+    """Describe each output line once, up front."""
+    rows = [("input", "accent", "the prompt sent to every model (task instructions + few-shot + the question)")]
+    if include_gold:
+        rows.append(("gold", "accent", "the dataset's correct answer — what the models are scored against"))
+    rows += [
+        ("base", "base", "the bare base model — NO LoRA"),
+        ("oracle", "oracle", "base + the real library LoRA we are replicating (the target behaviour)"),
+        ("generated", "generated", "base + the LoRA the hypernetwork generated from the description"),
+    ]
+    print(f"  {BOLD}legend{RESET}")
+    for label, color, desc in rows:
+        print(f"    {C[color]}{label:<10}{RESET} {DIM}{desc}{RESET}")
+    print()
+
+
 # ---- the evaluator --------------------------------------------------------
 class HypernetEvaluator:
     def __init__(self, config_path: str, checkpoint_path: str | None):
@@ -202,6 +218,7 @@ def interactive(ev: HypernetEvaluator, task: str | None, max_new_tokens: int) ->
     print(f"  {C['accent']}description{RESET} {desc}")
     print(f"  {C['warn']}commands{RESET}    :task <name>   :desc <text>   :tokens <n>   :help   :quit\n")
     print(f"  type an {BOLD}input{RESET} and press enter to compare base / oracle / generated.\n")
+    legend(include_gold=False)
 
     while True:
         try:
@@ -250,6 +267,7 @@ def batch(ev: HypernetEvaluator, tests: dict, default_max_new_tokens: int) -> No
 
     rule("batch eval", "title")
     print(f"  {len(tasks)} task(s), {n} example(s) each, models={models}\n")
+    legend(include_gold=True)
     rows = []
     for task in tasks:
         spec = ev.library.get(task)
