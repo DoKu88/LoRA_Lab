@@ -1,4 +1,4 @@
-"""Evaluation: SNI metrics + held-out generation scoring."""
+"""Evaluation: metrics + held-out generation scoring."""
 
 from .metrics import exact_match, rouge_l, score_predictions
 

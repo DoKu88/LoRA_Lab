@@ -1,12 +1,15 @@
-"""Phase 2 — the text-conditioned hypernetwork (T2L recipe).
+"""Text-conditioned hypernetwork (Text-to-LoRA).
 
 Generates a task-specific LoRA adapter for a frozen base model from a natural-
-language task description, in a single forward pass. Meta-trained by distilling
-the Phase-1 library (reconstruction warmup) then SFT (backprop task loss through
-the frozen base into the hypernetwork).
+language task description, in a single forward pass. Trained two ways:
+reconstruction of existing library LoRAs, and generalization (run the frozen
+base on the task and backprop the task loss into the hypernetwork).
 
 Modules:
-  apply   inject generated A/B factors as a live LoRA on a frozen base (grads flow to A/B)
-  model   the (stub, S1) hypernetwork: (task_emb, layer, module) -> LoRA A/B per target
-  recon   reconstruction objective (L1 on ΔW vs a target library LoRA; no base forward)
+  config     the run config (HyperConfig)
+  model      text encoder + output heads + the LoRA generator
+  apply      inject generated A/B factors as a live LoRA on a frozen base
+  data       samplers (reconstruction targets / generalization example batches)
+  train      the training loop, the two losses, model build + validation
+  retrieval  nearest-neighbor baseline (for eval)
 """

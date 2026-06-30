@@ -38,3 +38,4 @@ results/phase1/*.log
 
 # Phase 2 run outputs (hypernet checkpoints — heavy, regenerable from config+seed)
 results/phase2/runs/
+results/phase2/*.log

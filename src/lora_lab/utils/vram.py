@@ -1,16 +1,14 @@
 """GPU memory accounting helpers.
 
-Two jobs (both required by the sprint plan):
+Two jobs:
 
-1. **Per-phase peak** — wrap a code region and read back its peak
-   ``torch.cuda.max_memory_allocated()`` so we know *which pool* blew up
-   (notes.md §B: "Log VRAM per phase ... not just at the end").
+1. **Per-region peak** — wrap a code region and read back its peak
+   ``torch.cuda.max_memory_allocated()`` so we know *which pool* blew up.
 2. **Memory-vs-iteration trace** — sample allocated/reserved GB at each
    logged step so the run plots as a memory-vs-iteration curve, and the
-   per-run peak is just ``max`` of that trace (sprint plan S4).
+   per-run peak is just ``max`` of that trace.
 
-Everything degrades gracefully when CUDA is absent so the harness, dry-run
-and unit tests work on a CPU-only box.
+Everything degrades gracefully when CUDA is absent so it works on a CPU-only box.
 """
 
 from __future__ import annotations
@@ -110,7 +108,7 @@ class MemoryTracer:
     """Accumulate a (step, gpu_mem_gb) time series across training.
 
     Sample once per logged step via :meth:`record`. ``peak_gb`` is the max of
-    the allocated trace and feeds the Sprint 5 ``peak_vram_gb`` column;
+    the allocated trace and feeds the ``peak_vram_gb`` summary;
     :meth:`save_csv` persists the raw trace to ``results/mem_trace/`` so the
     overlaid memory-vs-iteration plot can be re-rendered offline.
     """
@@ -170,10 +168,9 @@ class MemoryTracer:
 def process_ram_bytes(include_children: bool = True) -> int:
     """Resident set size (RSS) of this process (+ children), in bytes.
 
-    Children matter for Phase 0.5: DeepSpeed/FSDP CPU-offload and dataloader
-    workers run the offloaded optimizer state and pinned buffers in child
-    processes, so the parent's RSS alone undercounts the host-RAM footprint we
-    are trying to measure. Returns 0 when psutil is unavailable (CPU CI).
+    Children matter when CPU-offload and dataloader workers run optimizer state
+    and pinned buffers in child processes, so the parent's RSS alone undercounts
+    the host-RAM footprint. Returns 0 when psutil is unavailable.
     """
     if not _HAS_PSUTIL:
         return 0
@@ -196,9 +193,9 @@ def host_ram_available() -> bool:
 class HostRamTracer:
     """Sample host (system) RAM and capture its peak across a run.
 
-    Phase 0.5's whole premise is that 96 GB system RAM is what makes 7B full FT
-    feasible via CPU offload — so peak *RAM* is a first-class measurement
-    alongside peak VRAM. Unlike the GPU peak (which CUDA tracks for us between
+    When CPU-offload is in play, peak *RAM* matters alongside peak VRAM (the
+    offloaded optimizer state lives in host memory). Unlike the GPU peak (which
+    CUDA tracks for us between
     samples), host RSS has no built-in high-water mark, so a **background
     sampler thread** polls it every ``interval_s`` to catch the spikes that land
     *between* logged training steps (e.g. the offloaded optimizer step on CPU).

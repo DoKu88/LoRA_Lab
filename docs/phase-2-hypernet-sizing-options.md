@@ -11,9 +11,19 @@ the paper's trends plus this repo's setup (4-bit Mistral-7B, q/k/v targets, SNI
 held-out gate, single 32 GB GPU). They are hypotheses for the gate run to
 replace with real numbers.
 
+> **Decision (committed): low-rank LoRA (`LowRankABHead`).** A single-target
+> overfit diagnostic settled the `vera → lowrank → full` ladder empirically: the
+> **VeRA** rung *cannot reconstruct* a target ΔW (relative error 1.0000 → 0.9999 —
+> its frozen random A/B only get reweighted, never reshaped), so it is **rejected**
+> as the default even though it is the smallest. **Low-rank LoRA** fits the same
+> target cleanly (1.0000 → 0.1966) and is the committed parameterization;
+> **full** A/B OOMs (~2.65 B params with Adam states). VeRA/full stay in the code
+> as the documented (rejected) ladder rungs.
+
 | Variant | Output head / what defines it | Params (≈) | Predicted held-out quality (vs per-task LoRA oracle = 100%) | Train Time (2k-step SFT, 1×32 GB) | Pros | Cons |
 |---|---|---|---|---|---|---|
-| **Ours (current)** — VeRA hypernet | Per-(layer,module) `VeRAHead`s: frozen random A/B, hypernet generates scaling vectors `(d,b)` from task⊕layer⊕module conditioning. Shared trunk, per-target heads. | ~13M | ~75–85% | ~1.5–2.5 hr | Cheapest to train; fits SFT on 32 GB; stable; strong inductive bias. | Off T2L taxonomy (VeRA isn't a paper variant); lowest ceiling; can only reweight fixed random directions, can't reshape them. |
+| **Ours (committed)** — low-rank LoRA hypernet | Per-(layer,module) `LowRankABHead`s: hypernet generates **real** A and B through a low-rank bottleneck from task⊕layer⊕module conditioning. Shared trunk, per-target heads. | ~151M | ~80–90% | ~1.5–2.5 hr | Reconstructs a target ΔW (the VeRA rung can't); fits SFT on 32 GB; one forward per target. | Off T2L taxonomy; more params than the paper's S/M variants (per-target, not shared, heads — see Prerequisite). |
+| Ours — VeRA hypernet *(rejected)* | Per-(layer,module) `VeRAHead`s: frozen random A/B, hypernet generates scaling vectors `(d,b)` from task⊕layer⊕module conditioning. | ~56M | n/a — fails reconstruction | ~1.5–2.5 hr | Cheapest; smallest output; strong inductive bias. | **Cannot reconstruct a target ΔW** (1.0000 → 0.9999): only reweights fixed random directions, never reshapes them → fails the warmup and dead-ends the SFT gate. |
 | **T2L-S** | Single shared head + rank-index embedding; emits one rank slice at a time. | ~5M | ~80–88% | ~1.8–3 hr | Smallest; best reported held-out generalization; lowest memory. | Slow generation (per-rank loop → r× hypernet forwards/step); biggest code change. |
 | **T2L-M** | One shared head emitting full A and B, conditioned on layer⊕module. | ~34M | ~85–92% | ~1.5–2.5 hr | Paper's expressivity/size sweet spot; one forward per target; no throughput hit. | Higher SFT memory; needs shared-head refactor. |
 | **T2L-L** | Per-module-type heads (q/k/v), each emitting full A and B; shared across layers via `layer_emb`. | ~55M | ~80–90% (high variance) | ~2.5–4.5 hr | Max adapter expressivity; closest to `FullABHead`. | Highest memory (32 GB OOM risk); weakest inductive bias → overfit risk; most params. |
@@ -21,9 +31,11 @@ replace with real numbers.
 ## How to read this
 
 - **Quality is non-monotonic in size.** Expected held-out ranking is roughly
-  **M ≳ S ≳ L > ours**, even though param count is L > M > S > ours. Smaller
-  output heads impose an inductive bias that helps generalization to *unseen*
-  tasks; L's extra capacity buys seen-task fit, not held-out gains.
+  **M ≳ ours ≳ S > L**. Smaller *shared-head* output parameterizations (S/M)
+  impose an inductive bias that helps generalization to *unseen* tasks; our
+  committed low-rank LoRA trades more params (per-target heads) for the ability
+  to emit real, reshapeable A/B — the capability the rejected VeRA rung lacked.
+  L's extra capacity buys seen-task fit, not held-out gains, and OOMs on 32 GB.
 - **Train time is base-bound, not hypernet-bound.** The SFT wall-clock is
   dominated by the frozen 7B base forward/backward, so ours/S/M cluster together
   (~1.5–2.5 hr). Only **L** slows down — its larger activations/grads pressure
@@ -44,17 +56,19 @@ the ~400-task train pool:
 | Recon warmup (S3) | ~2,000 | ~20–30 min (no base forward) |
 | SFT meta-train (S4) | ~6,000 (batch 4) | ~5–7.5 hr (base-backprop-bound, ~3–4.5 s/step) |
 | Held-out eval (S5) | 30 tasks × 4 conditions | ~1–2 hr |
-| **Total (VeRA default ≈ T2L-M)** | — | **< 10 hr** |
+| **Total (low-rank LoRA default)** | — | **< 10 hr** |
 
 T2L-L adds OOM-risk / batch-throttle on 32 GB (see the variant table); the per-step
 rate is unchanged, but a forced smaller batch needs more steps for the same
 coverage, pushing SFT toward the upper end. ~6,000 SFT steps × batch 4 ≈ **24,000
 example-passes** (~60 per train task).
-- **Ours = the safe floor.** Lowest predicted quality but near-guaranteed to fit
-  and train cleanly — which is exactly why it's the default first rung.
-- **Cheapest upgrade:** `parameterization="full"` + dedup the per-target heads
-  into one shared head ≈ **T2L-M**, the best predicted quality at roughly the
-  same train time as the current VeRA default.
+- **Ours = the committed default.** Low-rank LoRA is the smallest rung that can
+  actually reconstruct a target ΔW (VeRA can't) while still fitting SFT on 32 GB
+  (full A/B OOMs) — the reason it's the committed parameterization.
+- **Cheapest upgrade if the gate underperforms:** dedup the per-target heads into
+  **one shared head** queried by layer/module embeddings ≈ **T2L-M** — the paper's
+  best predicted quality at fewer params and roughly the same train time as the
+  current low-rank LoRA default.
 
 ## Prerequisite for any T2L variant
 
