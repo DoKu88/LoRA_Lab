@@ -14,7 +14,7 @@ rank: 16
 alpha: 32
 parameterization: full   # dense A/B (T2L-L style) — ~37M with the single shared
                          # head; lowrank/vera are smaller compression rungs.
-encoder_model: Alibaba-NLP/gte-large-en-v1.5   # must match the recon warmup's encoder
+encoder_model: thenlper/gte-large   # must match the recon warmup's encoder
 layer_dim: 16
 module_dim: 8
 trunk_hidden: 256

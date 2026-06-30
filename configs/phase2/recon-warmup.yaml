@@ -8,7 +8,7 @@ load_in_4bit: true
 rank: 16
 alpha: 32
 parameterization: full
-encoder_model: Alibaba-NLP/gte-large-en-v1.5
+encoder_model: thenlper/gte-large
 layer_dim: 16
 module_dim: 8
 trunk_hidden: 256
