@@ -46,6 +46,7 @@ C = {"base": "\033[90m", "oracle": "\033[32m", "generated": "\033[36m",
 LABEL = {"base": "BASE  (no LoRA)", "oracle": "ORACLE  (the LoRA we replicate)",
          "generated": "GENERATED  (hypernetwork)"}
 WIDTH = 88
+WRAP = 80   # wrap width for printed text; override with --width (e.g. 100, 120)
 
 
 def rule(text: str = "", color: str = "accent") -> None:
@@ -58,9 +59,18 @@ def rule(text: str = "", color: str = "accent") -> None:
 
 def block(label: str, text: str, color: str) -> None:
     print(f"{C[color]}{BOLD}▌ {label}{RESET}")
-    for line in textwrap.wrap(text, WIDTH - 4) or [f"{DIM}(empty){RESET}"]:
+    for line in textwrap.wrap(text, WRAP) or [f"{DIM}(empty){RESET}"]:
         print(f"    {line}")
     print()
+
+
+def labeled(label: str, text: str, color: str, lw: int = 10) -> None:
+    """Print 'label  text' with the full text wrapped at WRAP; continuation lines
+    align under the text."""
+    lines = textwrap.wrap(str(text), WRAP) or [""]
+    print(f"  {color}{label:<{lw}}{RESET} {lines[0]}")
+    for line in lines[1:]:
+        print(f"  {'':<{lw}} {line}")
 
 
 # ---- the evaluator --------------------------------------------------------
@@ -271,11 +281,11 @@ def batch(ev: HypernetEvaluator, tests: dict, default_max_new_tokens: int) -> No
 
         rule(f"{task}   [{metric}]", "accent")
         if show_samples and sample:
-            print(f"  {C['accent']}input{RESET}  {textwrap.shorten(sample['input'], WIDTH)}")
-            print(f"  {C['accent']}gold{RESET}   {textwrap.shorten(sample['ref'], WIDTH)}")
+            labeled("input", sample["input"], C["accent"])
+            labeled("gold", sample["ref"], C["accent"])
             for which in models:
                 if which in sample and which in scores:
-                    print(f"  {C[which]}{which:<10}{RESET} {textwrap.shorten(str(sample[which]), WIDTH)}")
+                    labeled(which, sample[which], C[which])
         print("  " + "  ".join(f"{C[w]}{w}={scores[w]:.3f}{RESET}" for w in models if w in scores) + "\n")
 
     # summary
@@ -291,6 +301,7 @@ def batch(ev: HypernetEvaluator, tests: dict, default_max_new_tokens: int) -> No
 
 
 def main() -> int:
+    global WRAP
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", required=True,
                     help="a run's config.yaml, its run directory, or a checkpoint .pt")
@@ -299,7 +310,9 @@ def main() -> int:
     ap.add_argument("--interactive", action="store_true", help="interactive prompt loop")
     ap.add_argument("--task", default=None, help="preselect a task (interactive)")
     ap.add_argument("--max-new-tokens", type=int, default=64)
+    ap.add_argument("--width", type=int, default=WRAP, help="wrap width for printed text (default 80)")
     args = ap.parse_args()
+    WRAP = args.width
 
     ev = HypernetEvaluator(args.config, args.checkpoint)
     if args.tests:
