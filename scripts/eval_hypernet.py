@@ -46,7 +46,7 @@ C = {"base": "\033[90m", "oracle": "\033[32m", "generated": "\033[36m",
 LABEL = {"base": "BASE  (no LoRA)", "oracle": "ORACLE  (the LoRA we replicate)",
          "generated": "GENERATED  (hypernetwork)"}
 WIDTH = 88
-WRAP = 80   # wrap width for printed text; override with --width (e.g. 100, 120)
+WRAP = 120   # wrap width for printed text; override with --width
 
 
 def rule(text: str = "", color: str = "accent") -> None:
